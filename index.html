@@ -41,16 +41,14 @@
 </main>
 <script type="module">
 import { Geddit } from './geddit.min.js';
+(async()=>{
 
-// ===== CONFIG (tuned for speed) =====
+// ================= CONFIG (fast but gentle on requests) =================
 const CFG={
   INCLUDE_NSFW:true,
-  MIN_REQ_GAP_MS:1200,
-  MAX_PAGES_PER_PICK:2,
-  CANDIDATE_TRIES:20,
-  RECENT_WINDOW:24,
+  MIN_REQ_GAP_MS:1500,
+  GLOBAL_BACKOFF_MS:7000,
   NEXT_PRELOAD:'auto',
-  GLOBAL_BACKOFF_MS:5000,
   HISTORY_BACK:80,
   AHEAD_MAX:5,
   NEED_AHEAD:4,
@@ -58,35 +56,40 @@ const CFG={
   BADGE_MIN_VISIBLE_MS:120,
   SETTLE_DELAY_MS:90,
   ACTIVATE_THRESHOLD:.75,
-  LOAD_GUARD_MS:650,
-  PENDING_GUARD_MS:450,
-  POOL_TARGET:8,
-  REFILL_SUBS_PER_CYCLE:4
+  LOAD_GUARD_MS:500,
+  PENDING_GUARD_MS:350,
+  POOL_TARGET:6,
+  REFILL_SUBS_PER_CYCLE:2,
+  REFILL_MIN_GAP_MS:2000,
+  JSON_RPM:6,              // max Reddit JSON requests per minute
+  PROBE_RPM:8,             // max off-DOM video probes per minute
+  MAX_PRECONNECTS_PER_MIN:3
 };
 
-// ===== STATE =====
+// ================= STATE =================
 const api=new Geddit();
 const app=document.getElementById('app');
 const S={
   subs:[],
   lastReqAt:0,
   backoffUntil:0,
-  timeline:[], // array of records
-  rendered:new Map(), // idx -> element
+  timeline:[],           // records
+  rendered:new Map(),    // idx->element
   active:null,
   cand:null,
   ratios:new Map(),
-  subState:new Map(), // sub -> {after, seen:Set, queue:[]}
-  pool:[], // ready candidates
-  bad:new Set(), // bad postIds this session
-  seenAll:new Set(), // global seen posts
+  subState:new Map(),    // sub -> {after, seen:Set, queue:[]}
+  pool:[],               // ready candidates
+  bad:new Set(),         // bad postIds
+  seenAll:new Set(),     // global seen ids
   refilling:false,
+  lastRefillAt:0,
   filling:new Set(),
   scrolling:false,
   settleTimer:null
 };
 
-// ===== UTILS =====
+// ================= UTILS =================
 const now=()=>Date.now();
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const pick=a=>a[(Math.random()*a.length)|0];
@@ -96,92 +99,352 @@ const redditVideoOf=d=>d.secure_media?.reddit_video?.fallback_url||d.media?.redd
 const isDirectVideo=u=>/^https?:\/\/.+\.(mp4|webm|m4v)$/i.test(u||'');
 const normGifv=u=>u&&/\.gifv$/i.test(u)?u.replace(/\.gifv$/i,'.mp4'):u;
 const oembedSrcOf=d=>{const h=d.secure_media?.oembed?.html||d.media?.oembed?.html;if(!h)return null;const ifr=new DOMParser().parseFromString(h,'text/html').querySelector('iframe');return ifr?ifr.getAttribute('src'):null};
-const addAutoParams=src=>{try{const u=new URL(src,location.href),h=u.hostname.toLowerCase(),S=(k,v)=>u.searchParams.set(k,v);S('autoplay','1');S('muted','1');S('playsinline','1');S('loop','1');if(h.includes('youtube.com')||h.includes('youtu.be')){S('controls','0');S('modestbranding','1');S('rel','0');S('enablejsapi','1');const id=u.hostname.includes('youtu.be')?u.pathname.split('/')[1]:(u.pathname.match(/\/embed\/([^/?#]+)/)?.[1]||u.searchParams.get('v')||'');if(id)S('playlist',id)}if(h.includes('vimeo.com'))S('background','1');return u+''}catch{return src}};
+const addAutoParams=src=>{try{const u=new URL(src,location.href),h=u.hostname.toLowerCase(),S=(k,v)=>u.searchParams.set(k,v);S('autoplay','1');S('muted','1');S('playsinline','1');S('loop','1');if(h.includes('youtube.com')||h.includes('youtu.be')){S('controls','0');S('modestbranding','1');S('rel','0');S('enablejsapi','1');const id=u.hostname.includes('youtu.be')?u.pathname.split('/')[1]:(u.pathname.match(/\/embed\/([^/?#]+)/)?.[1]||u.searchParams.get('v')||'');if(id)S('playlist',id)}if(h.includes('vimeo.com'))S('background','1');return u+''}catch(e){return src}};
 const postUrlOf=d=>d?.permalink?('https://www.reddit.com'+d.permalink):(d?.url||'');
-const fmtDate=ts=>{try{return new Date(ts*1000).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})}catch{return ''}};
+const fmtDate=ts=>{try{return new Date(ts*1000).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})}catch(e){return ''}};
 const renderTitle=(el,r)=>{const t=el.querySelector('.title');if(!t)return;t.textContent=r.title||'';const m=document.createElement('div');m.className='meta';m.innerHTML=`<a href="https://www.reddit.com/r/${r.sub}/" target="_blank" rel="noopener">r/${r.sub}</a> · <a href="${r.url}" target="_blank" rel="noopener">${fmtDate(r.created)}</a>`;t.appendChild(m)};
+
+// Preconnect budget
 const _pcHosts=new Set();
-const preconnect=url=>{try{const u=new URL(url,location.href).origin;if(!_pcHosts.has(u)){_pcHosts.add(u);['preconnect','dns-prefetch'].forEach(rel=>{const l=document.createElement('link');l.rel=rel;l.href=u;document.head.appendChild(l)})}}catch{}};
+let _pcCount=0,_pcResetAt=0;
+const maybePreconnect=url=>{try{const o=new URL(url,location.href).origin;const t=now();if(t>_pcResetAt){_pcResetAt=t+60000;_pcCount=0}if(_pcCount>=CFG.MAX_PRECONNECTS_PER_MIN||_pcHosts.has(o))return;_pcHosts.add(o);_pcCount++;['preconnect','dns-prefetch'].forEach(rel=>{const l=document.createElement('link');l.rel=rel;l.href=o;document.head.appendChild(l)})}catch(e){}};
 
-// ===== RATE-GATED API =====
+// Smoothed gates
+const makeSequentialGate=perMin=>{const iv=60000/Math.max(1,perMin);let last=0;return async(mult=1)=>{const t=now();const wait=Math.max(0,iv*mult-(t-last));if(wait)await sleep(wait);last=now()}};
+const gateJSON=makeSequentialGate(CFG.JSON_RPM);
+const gatePROBE=makeSequentialGate(CFG.PROBE_RPM);
+
+// ================= RATE-GATED API =================
 const rateGate=async()=>{let w=0,t=now();if(t<S.backoffUntil)w=Math.max(w,S.backoffUntil-t);const s=t-S.lastReqAt;if(s<CFG.MIN_REQ_GAP_MS)w=Math.max(w,CFG.MIN_REQ_GAP_MS-s);if(w)await sleep(w);S.lastReqAt=now()};
-const fetchHotPage=async(sub,after=null)=>{try{await rateGate();const o={include_over_18:CFG.INCLUDE_NSFW};if(after)o.after=after;const r=await api.getSubmissions('hot',sub,o);if(!r||!Array.isArray(r.posts))throw Error('bad');return{items:r.posts.map(p=>p.data||p),after:r.after||null}}catch{S.backoffUntil=now()+CFG.GLOBAL_BACKOFF_MS;return{items:[],after:null}}};
+const fetchHotPage=async(sub,after=null,urgent=false)=>{
+  try{
+    await rateGate();
+    await gateJSON(urgent?0:1);
+    const o={include_over_18:CFG.INCLUDE_NSFW};
+    if(after)o.after=after;
+    const r=await api.getSubmissions('hot',sub,o);
+    if(!r||!Array.isArray(r.posts))throw Error('bad');
+    return {items:r.posts.map(p=>p.data||p),after:r.after||null};
+  }catch(e){
+    S.backoffUntil=now()+CFG.GLOBAL_BACKOFF_MS;
+    return {items:[],after:null};
+  }
+};
 
-// ===== SUB STATE =====
+// ================= SUB STATE =================
 const gSub=s=>S.subState.get(s)||S.subState.set(s,{after:null,seen:new Set(),queue:[]}).get(s);
-const markSub=s=>{}; // no-op (we allow back-to-back by design)
 
-// ===== RECORD =====
-const recFrom=(sub,d)=>{const title=d.title||'(untitled)',bg=posterOf(d),rv=redditVideoOf(d),direct=normGifv(d.url_overridden_by_dest||d.url||''),url=postUrlOf(d),created=d.created_utc||0;if(rv||isDirectVideo(direct)){const prio=rv?2:1;return{idx:S.timeline.length,sub,postId:d.name||d.id,kind:'video',src:rv||direct,poster:bg||'',bg:bg||'',title,url,created,playedOnce:false,prio}}const o=oembedSrcOf(d);return o?{idx:S.timeline.length,sub,postId:d.name||d.id,kind:'iframe',src:addAutoParams(o),poster:'',bg:bg||'',title,url,created,playedOnce:false,prio:0}:null};
+// ================= RECORD =================
+const recFrom=(sub,d)=>{
+  const title=d.title||'(untitled)',bg=posterOf(d),rv=redditVideoOf(d),direct=normGifv(d.url_overridden_by_dest||d.url||''),url=postUrlOf(d),created=d.created_utc||0;
+  if(rv||isDirectVideo(direct)){
+    const prio=rv?2:1;
+    return {idx:S.timeline.length,sub,postId:d.name||d.id,kind:'video',src:rv||direct,poster:bg||'',bg:bg||'',title,url,created,playedOnce:false,prio};
+  }
+  const o=oembedSrcOf(d);
+  return o?{idx:S.timeline.length,sub,postId:d.name||d.id,kind:'iframe',src:addAutoParams(o),poster:'',bg:bg||'',title,url,created,playedOnce:false,prio:0}:null;
+};
 
-// ===== POOL REFILL (smart) =====
-const refillSubQueue=async(sub)=>{const st=gSub(sub);if(st.queue.length)return;const {items,after}=await fetchHotPage(sub,st.after);if(!items||!items.length)return;for(const d of items){const id=d.name||d.id;const rv=redditVideoOf(d);const direct=normGifv(d.url_overridden_by_dest||d.url||'');const emb=oembedSrcOf(d);if(!st.seen.has(id)&&!S.seenAll.has(id)&&(rv||isDirectVideo(direct)||emb))st.queue.push(d)}st.after=after||st.after};
-const ensurePoolFilled=async()=>{if(S.refilling)return;S.refilling=true;try{const need=CFG.POOL_TARGET-S.pool.length;if(need<=0)return;const subs=[...S.subs];for(let i=0;i<CFG.REFILL_SUBS_PER_CYCLE && S.pool.length<CFG.POOL_TARGET && subs.length;i++){const sub=pick(subs);subs.splice(subs.indexOf(sub),1);await refillSubQueue(sub);const st=gSub(sub);while(st.queue.length && S.pool.length<CFG.POOL_TARGET){const d=st.queue.shift();const rec=recFrom(sub,d);if(!rec)continue;if(S.bad.has(rec.postId)||st.seen.has(rec.postId)||S.seenAll.has(rec.postId))continue;rec.prio=(rec.kind==='iframe'?0:(rec.src.includes('v.redd.it')?2:1));preconnect(rec.src);S.pool.push(rec)}}S.pool.sort((a,b)=>(b.prio||0)-(a.prio||0))}finally{S.refilling=false}};
+// ================= POOL REFILL =================
+const refillSubQueue=async(sub,urgent=false)=>{
+  const st=gSub(sub);
+  if(st.queue.length)return;
+  const {items,after}=await fetchHotPage(sub,st.after,urgent);
+  if(!items||!items.length)return;
+  for(const d of items){
+    const id=d.name||d.id;
+    const rv=redditVideoOf(d);
+    const direct=normGifv(d.url_overridden_by_dest||d.url||'');
+    const emb=oembedSrcOf(d);
+    if(!st.seen.has(id)&&!S.seenAll.has(id)&&(rv||isDirectVideo(direct)||emb))st.queue.push(d)
+  }
+  st.after=after||st.after
+};
+const ensurePoolFilled=async(urgent=false)=>{
+  if(S.refilling)return;
+  const t=now();
+  if(!urgent && t-(S.lastRefillAt||0)<CFG.REFILL_MIN_GAP_MS)return;
+  S.refilling=true;S.lastRefillAt=t;
+  try{
+    const need=CFG.POOL_TARGET-S.pool.length;
+    if(need<=0)return;
+    const subs=[...S.subs];
+    const bursts = urgent? Math.max(2, CFG.REFILL_SUBS_PER_CYCLE) : CFG.REFILL_SUBS_PER_CYCLE;
+    const target = urgent? Math.max(6, CFG.POOL_TARGET) : CFG.POOL_TARGET;
+    for(let i=0;i<bursts && S.pool.length<target && subs.length;i++){
+      const sub=pick(subs);
+      subs.splice(subs.indexOf(sub),1);
+      await refillSubQueue(sub, urgent);
+      const st=gSub(sub);
+      while(st.queue.length && S.pool.length<target){
+        const d=st.queue.shift();
+        const rec=recFrom(sub,d);
+        if(!rec)continue;
+        if(S.bad.has(rec.postId)||st.seen.has(rec.postId)||S.seenAll.has(rec.postId))continue;
+        rec.prio=(rec.kind==='iframe'?0:(rec.src.includes('v.redd.it')?2:1));
+        maybePreconnect(rec.src);
+        S.pool.push(rec)
+      }
+    }
+    S.pool.sort((a,b)=>(b.prio||0)-(a.prio||0))
+  }finally{
+    S.refilling=false;S.lastRefillAt=now()
+  }
+};
 const takeFromPool=()=>{if(!S.pool.length)return null;const rec=S.pool.shift();gSub(rec.sub).seen.add(rec.postId);S.seenAll.add(rec.postId);return rec};
 
-// ===== FAST REPLACE & FALLBACK PICK =====
-const probeVideo=(src,timeout=450)=>new Promise(resolve=>{try{const v=document.createElement('video');v.muted=true;v.preload='metadata';v.src=src;let to=setTimeout(()=>{cleanup(false)},timeout);const cleanup=ok=>{clearTimeout(to);v.removeAttribute('src');try{v.load()}catch{};resolve(!!ok)};v.onloadeddata=()=>cleanup(true);v.onerror=()=>cleanup(false)}catch{resolve(false)}});
-const fastReplace=async idx=>{await ensurePoolFilled();let tries=0,rec=null;while(tries<3){rec=takeFromPool();if(!rec){await ensurePoolFilled();rec=takeFromPool();if(!rec)break}if(rec.kind==='video'){const ok=await probeVideo(rec.src,450);if(!ok){S.bad.add(rec.postId);tries++;continue}}break}if(!rec)return;rec.idx=idx;S.timeline[idx]=rec;markSub(rec.sub);upgrade(idx);const el=S.rendered.get(idx);cancelGuard(el)};
-const choosePost=async()=>{const tried=new Set();for(let i=0;i<20;i++){const avail=S.subs.filter(s=>!tried.has(s));const sub=avail.length?pick(avail):pick(S.subs);tried.add(sub);let after=gSub(sub).after;for(let p=0;p<2;p++){const {items,after:na}=await fetchHotPage(sub,after);if(!items||!items.length)break;for(const d of items){const id=d.name||d.id;if(S.seenAll.has(id))continue;const rv=redditVideoOf(d);const direct=normGifv(d.url_overridden_by_dest||d.url||'');const emb=oembedSrcOf(d);if(rv||isDirectVideo(direct)||emb){gSub(sub).seen.add(id);S.seenAll.add(id);gSub(sub).after=na||gSub(sub).after;return {sub,post:d}}}after=na;if(!after)break}}return null};
+// ================= BADGE =================
+const badgeCtrl=el=>{
+  if(el._badge)return el._badge;
+  const b=el.querySelector('.loading-badge');
+  const c={v:false,t:null,last:0,
+    show(){if(!b||c.v||c.t)return;c.t=setTimeout(()=>{c.t=null;c.v=true;c.last=now();b.style.display='flex'},CFG.BADGE_DELAY_MS)},
+    hide(){if(!b)return;const end=()=>{c.v=false;c.last=now();b.style.display='none'};if(c.v){const e=now()-c.last;if(e>=CFG.BADGE_MIN_VISIBLE_MS)end();else setTimeout(end,CFG.BADGE_MIN_VISIBLE_MS-e)}else if(c.t){clearTimeout(c.t);c.t=null}}
+  };
+  return(el._badge=c)
+};
 
-// ===== BADGE =====
-const badgeCtrl=el=>{if(el._badge)return el._badge;const b=el.querySelector('.loading-badge');const c={v:false,t:null,last:0,show(){if(!b||c.v||c.t)return;c.t=setTimeout(()=>{c.t=null;c.v=true;c.last=now();b.style.display='flex'},CFG.BADGE_DELAY_MS)},hide(){if(!b)return;const end=()=>{c.v=false;c.last=now();b.style.display='none'};if(c.v){const e=now()-c.last;if(e>=CFG.BADGE_MIN_VISIBLE_MS)end();else setTimeout(end,CFG.BADGE_MIN_VISIBLE_MS-e)}else if(c.t){clearTimeout(c.t);c.t=null}}};return(el._badge=c)};
-
-// ===== GUARDS =====
+// ================= GUARDS / SWAPS =================
+const probeVideo=(src,timeout=450)=>new Promise(async resolve=>{
+  await gatePROBE();
+  try{
+    const v=document.createElement('video');
+    v.muted=true;v.preload='metadata';v.src=src;
+    let to=setTimeout(()=>{cleanup(false)},timeout);
+    const cleanup=ok=>{clearTimeout(to);v.removeAttribute('src');try{v.load()}catch(e){};resolve(!!ok)};
+    v.onloadeddata=()=>cleanup(true);
+    v.onerror=()=>cleanup(false)
+  }catch(e){resolve(false)}
+});
+const fastReplace=async (idx,urgent=false)=>{
+  await ensurePoolFilled(urgent);
+  let tries=0,rec=null;
+  while(tries<3){
+    rec=takeFromPool();
+    if(!rec){
+      await ensurePoolFilled(urgent);
+      rec=takeFromPool();
+      if(!rec)break
+    }
+    if(rec.kind==='video'){
+      const ok=await probeVideo(rec.src,450);
+      if(!ok){S.bad.add(rec.postId);tries++;continue}
+    }
+    break
+  }
+  if(!rec)return;
+  rec.idx=idx;S.timeline[idx]=rec;upgrade(idx);
+  const el=S.rendered.get(idx);cancelGuard(el)
+};
+const choosePost=async()=>{
+  const tried=new Set();
+  for(let i=0;i<20;i++){
+    const avail=S.subs.filter(s=>!tried.has(s));
+    const sub=avail.length?pick(avail):pick(S.subs);
+    tried.add(sub);
+    let after=gSub(sub).after;
+    for(let p=0;p<2;p++){
+      const {items,after:na}=await fetchHotPage(sub,after,true);
+      if(!items||!items.length)break;
+      for(const d of items){
+        const id=d.name||d.id;
+        if(S.seenAll.has(id))continue;
+        const rv=redditVideoOf(d);
+        const direct=normGifv(d.url_overridden_by_dest||d.url||'');
+        const emb=oembedSrcOf(d);
+        if(rv||isDirectVideo(direct)||emb){
+          gSub(sub).seen.add(id);S.seenAll.add(id);gSub(sub).after=na||gSub(sub).after;
+          return {sub,post:d}
+        }
+      }
+      after=na;if(!after)break
+    }
+  }
+  return null
+};
 const startGuard=(el,fn,ms=CFG.LOAD_GUARD_MS)=>{cancelGuard(el);el._guardT=setTimeout(fn,ms)};
 const cancelGuard=el=>{if(el&&el._guardT){clearTimeout(el._guardT);el._guardT=null}};
-const quickSwap=(el,idx,left=3,ms=CFG.PENDING_GUARD_MS)=>{startGuard(el,async()=>{await fastReplace(idx);if(left>0)quickSwap(el,idx,left-1,Math.max(300,ms-100))},ms)};
+const quickSwap=(el,idx,left=3,ms=CFG.PENDING_GUARD_MS)=>{startGuard(el,async()=>{await fastReplace(idx,true);if(left>0)quickSwap(el,idx,left-1,Math.max(300,ms-100))},ms)};
 
-// ===== REVEAL =====
-const bindReveal=(slide,video)=>{if(video._bound)return;video._bound=true;const th=slide.querySelector('.thumb');let revealed=false;const reveal=()=>{if(revealed)return;revealed=true;video.classList.add('is-playing');if(th){th.style.opacity='0';th.addEventListener('transitionend',()=>th.style.display='none',{once:true})}badgeCtrl(slide).hide();cancelGuard(slide);const r=S.timeline[+slide.dataset.idx];if(r)r.playedOnce=true};const badge=()=>{if(!revealed&&!video.classList.contains('is-playing'))badgeCtrl(slide).show()};video.addEventListener('playing',()=>{'requestVideoFrameCallback'in video?video.requestVideoFrameCallback?.(()=>reveal()):video.addEventListener('timeupdate',function onTU(){if(video.currentTime>0){video.removeEventListener('timeupdate',onTU);reveal()}},{once:true});setTimeout(()=>{if(!revealed)reveal()},120)});video.addEventListener('loadeddata',badge);video.addEventListener('waiting',badge);video.addEventListener('ended',()=>video.play().catch(()=>{}));video.addEventListener('error',()=>{badgeCtrl(slide).show();slide.querySelector('.loading-badge span')&&(slide.querySelector('.loading-badge span').textContent='Tap to retry')});if(S.timeline[+slide.dataset.idx]?.playedOnce)reveal()};
+// ================= REVEAL =================
+const bindReveal=(slide,video)=>{
+  if(video._bound)return;video._bound=true;
+  const th=slide.querySelector('.thumb');let revealed=false;
+  const reveal=()=>{if(revealed)return;revealed=true;video.classList.add('is-playing');if(th){th.style.opacity='0';th.addEventListener('transitionend',()=>th.style.display='none',{once:true})}badgeCtrl(slide).hide();cancelGuard(slide);const r=S.timeline[+slide.dataset.idx];if(r)r.playedOnce=true};
+  const badge=()=>{if(!revealed&&!video.classList.contains('is-playing'))badgeCtrl(slide).show()};
+  video.addEventListener('playing',()=>{
+    ('requestVideoFrameCallback'in video)
+      ? video.requestVideoFrameCallback?.(()=>reveal())
+      : video.addEventListener('timeupdate',function onTU(){if(video.currentTime>0){video.removeEventListener('timeupdate',onTU);reveal()}},{once:true});
+    setTimeout(()=>{if(!revealed)reveal()},120)
+  });
+  video.addEventListener('loadeddata',badge);
+  video.addEventListener('waiting',badge);
+  video.addEventListener('ended',()=>video.play().catch(()=>{}));
+  video.addEventListener('error',()=>{badgeCtrl(slide).show();slide.querySelector('.loading-badge span')&&(slide.querySelector('.loading-badge span').textContent='Tap to retry')});
+  if(S.timeline[+slide.dataset.idx]?.playedOnce)reveal()
+};
 
-// ===== RENDER =====
+// ================= RENDER =================
 const badgeEl=(t='Loading video…')=>{const d=document.createElement('div');d.className='loading-badge';d.innerHTML=`<div class="spinner"></div><span>${t}</span>`;return d};
 const baseSlide=(idx,kind,sub,bg,title)=>{const s=document.createElement('section');s.className='slide';s.dataset.idx=idx;s.dataset.kind=kind;s.dataset.sub=sub||'';s.innerHTML=`<div class="bg"><img ${bg?`src="${bg}"`:''}></div><div class="media"></div><div class="title"></div>`;s.querySelector('.title').textContent=title||'';obs(s);return s};
 const addVideo=(s,m,r)=>{const v=document.createElement('video');Object.assign(v,{loop:true,muted:true,autoplay:false,controls:false,preload:'none'});v.setAttribute('muted','');v.setAttribute('playsinline','');v.setAttribute('webkit-playsinline','');v.disablePictureInPicture=v.disableRemotePlayback=v.playsInline=true;v.dataset.src=r.src;v.dataset.idx=r.idx; if(r.poster)v.poster=r.poster;m.appendChild(v);bindReveal(s,v);return v};
-const renderSlide=r=>{const s=baseSlide(r.idx,r.kind,r.sub,r.bg,r.title);const m=s.querySelector('.media');if(r.kind!=='pending')renderTitle(s,r);if(r.kind==='pending'){m.appendChild(badgeEl('Fetching next video…'));quickSwap(s,r.idx,3,CFG.PENDING_GUARD_MS);return s}if(r.poster){const i=document.createElement('img');i.className='thumb';i.loading='eager';i.decoding='async';i.src=r.poster;m.appendChild(i)}m.appendChild(badgeEl());if(r.kind==='video')addVideo(s,m,r);else{const f=document.createElement('iframe');f.src='about:blank';f.dataset.autoplaySrc=r.src;f.allow='autoplay; fullscreen; picture-in-picture; encrypted-media';f.referrerPolicy='no-referrer-when-downgrade';f.frameBorder='0';m.appendChild(f)}return s};
+const renderSlide=r=>{
+  const s=baseSlide(r.idx,r.kind,r.sub,r.bg,r.title);
+  const m=s.querySelector('.media');
+  if(r.kind!=='pending')renderTitle(s,r);
+  if(r.kind==='pending'){m.appendChild(badgeEl('Fetching next video…'));quickSwap(s,r.idx,3,CFG.PENDING_GUARD_MS);return s}
+  if(r.poster){const i=document.createElement('img');i.className='thumb';i.loading='eager';i.decoding='async';i.src=r.poster;m.appendChild(i)}
+  m.appendChild(badgeEl());
+  if(r.kind==='video')addVideo(s,m,r);
+  else{const f=document.createElement('iframe');f.src='about:blank';f.dataset.autoplaySrc=r.src;f.allow='autoplay; fullscreen; picture-in-picture; encrypted-media';f.referrerPolicy='no-referrer-when-downgrade';f.frameBorder='0';m.appendChild(f)}
+  return s
+};
 const insertOrdered=el=>{const idx=+el.dataset.idx,keys=[...S.rendered.keys()].sort((a,b)=>a-b),n=keys.find(i=>i>idx);n!=null?app.insertBefore(el,S.rendered.get(n)):app.appendChild(el);S.rendered.set(idx,el);const ph=app.querySelector('.slide .empty');if(ph)app.querySelector('.slide').remove()};
 const ensureRendered=i=>{if(S.rendered.has(i))return;const r=S.timeline[i];if(!r)return;insertOrdered(renderSlide(r))};
-const upgrade=i=>{const r=S.timeline[i],el=S.rendered.get(i);if(!el){ensureRendered(i);return}cancelGuard(el);el.dataset.kind=r.kind;el.dataset.sub=r.sub||'';const bg=el.querySelector('.bg img');if(bg)bg.src=r.bg||bg.src;renderTitle(el,r);const m=el.querySelector('.media');m.innerHTML='';if(r.poster){const im=document.createElement('img');im.className='thumb';im.loading='eager';im.decoding='async';im.src=r.poster;m.appendChild(im)}m.appendChild(badgeEl());if(r.kind==='video')addVideo(el,m,r);else{const f=document.createElement('iframe');f.src='about:blank';f.dataset.autoplaySrc=r.src;f.allow='autoplay; fullscreen; picture-in-picture; encrypted-media';f.referrerPolicy='no-referrer-when-downgrade';f.frameBorder='0';m.appendChild(f)}if(el===S.cand&&!S.scrolling)commit()};
-const unrender=i=>{const el=S.rendered.get(i);if(!el)return;cancelGuard(el);io.unobserve(el);if(el.dataset.kind==='video')detach(el.querySelector('video'));if(el.dataset.kind==='iframe')stopIfr(el.querySelector('iframe'));el.remove();S.rendered.delete(i)};
+const upgrade=i=>{
+  const r=S.timeline[i],el=S.rendered.get(i);
+  if(!el){ensureRendered(i);return}
+  cancelGuard(el);
+  el.dataset.kind=r.kind;el.dataset.sub=r.sub||'';
+  const bg=el.querySelector('.bg img');if(bg)bg.src=r.bg||bg.src;
+  renderTitle(el,r);
+  const m=el.querySelector('.media');m.innerHTML='';
+  if(r.poster){const im=document.createElement('img');im.className='thumb';im.loading='eager';im.decoding='async';im.src=r.poster;m.appendChild(im)}
+  m.appendChild(badgeEl());
+  if(r.kind==='video')addVideo(el,m,r);
+  else{const f=document.createElement('iframe');f.src='about:blank';f.dataset.autoplaySrc=r.src;f.allow='autoplay; fullscreen; picture-in-picture; encrypted-media';f.referrerPolicy='no-referrer-when-downgrade';f.frameBorder='0';m.appendChild(f)}
+  if(el===S.cand&&!S.scrolling)commit()
+};
+const unrender=i=>{
+  const el=S.rendered.get(i);if(!el)return;
+  cancelGuard(el);io.unobserve(el);
+  if(el.dataset.kind==='video')detach(el.querySelector('video'));
+  if(el.dataset.kind==='iframe')stopIfr(el.querySelector('iframe'));
+  el.remove();S.rendered.delete(i)
+};
 
-// ===== PLACEHOLDERS =====
-const addPlaceholder=()=>{const idx=S.timeline.length;const rec={idx,sub:'',postId:null,kind:'pending',src:'',poster:'',bg:'',title:'Loading next…',playedOnce:false};S.timeline.push(rec);ensureRendered(idx); // try instant from pool
-const r=takeFromPool();if(r){r.idx=idx;S.timeline[idx]=r;markSub(r.sub);upgrade(idx)}return idx};
-const fill=async idx=>{if(S.filling.has(idx))return;S.filling.add(idx);try{await ensurePoolFilled();let rec=takeFromPool();if(!rec){const pick=await choosePost();if(pick){const r2=recFrom(pick.sub,pick.post);if(r2){rec=r2;gSub(rec.sub).seen.add(rec.postId);S.seenAll.add(rec.postId)}}}if(!rec)return;rec.idx=idx;S.timeline[idx]=rec;markSub(rec.sub);upgrade(idx)}finally{S.filling.delete(idx)}};
+// ================= PLACEHOLDERS / FILL =================
+const addPlaceholder=()=>{
+  const idx=S.timeline.length;
+  const rec={idx,sub:'',postId:null,kind:'pending',src:'',poster:'',bg:'',title:'Loading next…',playedOnce:false};
+  S.timeline.push(rec);ensureRendered(idx);
+  const r=takeFromPool();if(r){r.idx=idx;S.timeline[idx]=r;upgrade(idx)}
+  return idx
+};
+const fill=async (idx, urgent=false)=>{
+  if(S.filling.has(idx))return;S.filling.add(idx);
+  try{
+    await ensurePoolFilled(urgent);
+    let rec=takeFromPool();
+    if(!rec){
+      const pick=await choosePost();
+      if(pick){
+        const r2=recFrom(pick.sub,pick.post);
+        if(r2){rec=r2;gSub(rec.sub).seen.add(rec.postId);S.seenAll.add(rec.postId)}
+      }
+    }
+    if(!rec)return;
+    rec.idx=idx;S.timeline[idx]=rec;upgrade(idx)
+  }finally{S.filling.delete(idx)}
+};
 
-// ===== OBSERVER / CANDIDATE =====
+// ================= OBSERVER / CANDIDATE =================
 const io=new IntersectionObserver(es=>{for(const e of es)S.ratios.set(e.target,e.intersectionRatio);updateCand()},{root:app,threshold:[0,CFG.ACTIVATE_THRESHOLD,1]});
 const obs=s=>io.observe(s);
 const best=()=>{let b=null,rb=CFG.ACTIVATE_THRESHOLD;for(const [el,r] of S.ratios){if(!app.contains(el)){S.ratios.delete(el);continue}if(r>rb){rb=r;b=el}}return b};
 const ensureAhead=i=>{while(S.timeline.length<i+CFG.NEED_AHEAD){const _i=addPlaceholder();fill(_i)}};
 const updateCand=()=>{const c=best();if(c)S.cand=c; if(S.cand){const i=+S.cand.dataset.idx,min=Math.max(0,i-CFG.HISTORY_BACK),max=Math.min(S.timeline.length-1,i+CFG.AHEAD_MAX);for(let k=min;k<=max;k++)ensureRendered(k);ensurePoolFilled();ensureAhead(i);const need=i+1;if(need>=S.timeline.length){const _i=addPlaceholder();fill(_i)}}};
 
-// ===== SCROLL SETTLE =====
+// ================= SCROLL SETTLE =================
 const onScroll=()=>{S.scrolling=true;clearTimeout(S.settleTimer);S.settleTimer=setTimeout(()=>{S.scrolling=false;commit()},CFG.SETTLE_DELAY_MS)};
 app.addEventListener('scroll',onScroll,{passive:true});
 ['resize','wheel'].forEach(e=>window.addEventListener(e,onScroll,{passive:true}));
 window.addEventListener('keydown',e=>{if(['PageDown','PageUp','Home','End','ArrowDown','ArrowUp','ArrowLeft','ArrowRight','Space'].includes(e.code))onScroll()});
 
-// ===== PLAYBACK =====
+// ================= PLAYBACK =================
 const attach=(v,m)=>{if(!v)return; if(!v.src&&v.dataset.src){v.src=v.dataset.src;v.preload=m;v.load()}else v.preload=m};
 const detach=v=>{if(!v)return;v.pause();if(v.dataset.role!=='prev'){if(v.src){if(!v.dataset.src)v.dataset.src=v.src;v.removeAttribute('src');v.load()}}v.preload='none';v.classList.remove('is-playing')};
 const startIfr=f=>{if(f){const want=f.dataset.autoplaySrc||'';if(f.src!==want)f.src=want}};const stopIfr=f=>{if(f&&f.src!=='about:blank')f.src='about:blank'};
 const ensurePlay=v=>{if(!v)return;const go=()=>v.play().catch(()=>{});v.readyState>=2?go():v.addEventListener('canplay',go,{once:true})};
-const prime=idx=>{for(const [i,el] of S.rendered){const k=el.dataset.kind,r=i===idx?'active':(i===idx-1?'prev':(i===idx+1?'next':'other'));if(k==='video'){const v=el.querySelector('video');if(!v)continue;v.dataset.role=r;if(r==='active'){attach(v,'auto');const rec=S.timeline[+el.dataset.idx],revisit=!!rec?.playedOnce;if(revisit){v.classList.add('is-playing');const th=el.querySelector('.thumb');if(th&&th.style.display!=='none'){th.style.opacity='0';th.addEventListener('transitionend',()=>th.style.display='none',{once:true})}badgeCtrl(el).hide();ensurePlay(v)}else{if(!S.scrolling){v.readyState<2?badgeCtrl(el).show():badgeCtrl(el).hide();v.muted=true;v.setAttribute('muted','');v.setAttribute('playsinline','');v.setAttribute('webkit-playsinline','');v.loop=true;ensurePlay(v);startGuard(el,()=>fastReplace(+el.dataset.idx))}else{badgeCtrl(el).show();v.pause()}}}else if(r==='next'){attach(v,CFG.NEXT_PRELOAD);badgeCtrl(el).hide();cancelGuard(el);v.pause()}else if(r==='prev'){attach(v,'metadata');badgeCtrl(el).hide();cancelGuard(el);v.pause()}else{detach(v);badgeCtrl(el).hide();cancelGuard(el)}} else if(k==='iframe'){if(r==='active'){const f=el.querySelector('iframe');if(!S.scrolling)startIfr(f);if(f&&!f._lb){f._lb=true;f.addEventListener('load',()=>cancelGuard(el))}startGuard(el,()=>fastReplace(+el.dataset.idx))}else if(r==='next'){startIfr(el.querySelector('iframe'));cancelGuard(el)}else{stopIfr(el.querySelector('iframe'));cancelGuard(el)}badgeCtrl(el).hide()}else if(k==='pending'){if(r==='next'||r==='active')fill(+el.dataset.idx)}}};
+const prime=idx=>{
+  for(const [i,el] of S.rendered){
+    const k=el.dataset.kind,r=i===idx?'active':(i===idx-1?'prev':(i===idx+1?'next':'other'));
+    if(k==='video'){
+      const v=el.querySelector('video');if(!v)continue;v.dataset.role=r;
+      if(r==='active'){
+        attach(v,'auto');
+        const rec=S.timeline[+el.dataset.idx],revisit=!!rec?.playedOnce;
+        if(revisit){
+          v.classList.add('is-playing');
+          const th=el.querySelector('.thumb');if(th&&th.style.display!=='none'){th.style.opacity='0';th.addEventListener('transitionend',()=>th.style.display='none',{once:true})}
+          badgeCtrl(el).hide();ensurePlay(v)
+        }else{
+          if(!S.scrolling){
+            v.readyState<2?badgeCtrl(el).show():badgeCtrl(el).hide();
+            v.muted=true;v.setAttribute('muted','');v.setAttribute('playsinline','');v.setAttribute('webkit-playsinline','');v.loop=true;
+            ensurePlay(v);
+            startGuard(el,()=>fastReplace(+el.dataset.idx,true))
+          }else{
+            badgeCtrl(el).show();v.pause()
+          }
+        }
+      }else if(r==='next'){attach(v,CFG.NEXT_PRELOAD);badgeCtrl(el).hide();cancelGuard(el);v.pause()}
+      else if(r==='prev'){attach(v,'metadata');badgeCtrl(el).hide();cancelGuard(el);v.pause()}
+      else{detach(v);badgeCtrl(el).hide();cancelGuard(el)}
+    } else if(k==='iframe'){
+      if(r==='active'){
+        const f=el.querySelector('iframe');if(!S.scrolling)startIfr(f);
+        if(f&&!f._lb){f._lb=true;f.addEventListener('load',()=>cancelGuard(el))}
+        startGuard(el,()=>fastReplace(+el.dataset.idx,true))
+      }else if(r==='next'){startIfr(el.querySelector('iframe'));cancelGuard(el)}
+      else{stopIfr(el.querySelector('iframe'));cancelGuard(el)}
+      badgeCtrl(el).hide()
+    } else if(k==='pending'){
+      if(r==='next'||r==='active')fill(+el.dataset.idx)
+    }
+  }
+};
 
-// ===== ACTIVATION =====
-const commit=()=>{const c=S.cand||best();if(!c)return;const idx=+c.dataset.idx;if(S.active!==c){S.active=c;const min=Math.max(0,idx-CFG.HISTORY_BACK),max=Math.min(S.timeline.length-1,idx+CFG.AHEAD_MAX);for(let i=min;i<=max;i++)ensureRendered(i)}prime(idx);ensurePoolFilled();ensureAhead(idx);const need=idx+1;if(need>=S.timeline.length){const _i=addPlaceholder();fill(_i)}};
+// ================= ACTIVATE =================
+const commit=()=>{
+  const c=S.cand||best();if(!c)return;
+  const idx=+c.dataset.idx;
+  if(S.active!==c){
+    S.active=c;
+    const min=Math.max(0,idx-CFG.HISTORY_BACK),max=Math.min(S.timeline.length-1,idx+CFG.AHEAD_MAX);
+    for(let i=min;i<=max;i++)ensureRendered(i)
+  }
+  prime(idx);ensurePoolFilled();ensureAhead(idx);
+  const need=idx+1;if(need>=S.timeline.length){const _i=addPlaceholder();fill(_i)}
+};
 
-// ===== STARTUP & SUBS LOAD + GATE =====
+// ================= STARTUP + GATE =================
 const showErr=msg=>{const h=app.querySelector('.slide');if(h)h.innerHTML='<div class="error">'+msg+'</div>'};
-const loadSubs=async()=>{const r=await fetch('./subreddits.json');if(!r.ok)throw 0;const j=await r.json();const a=Array.isArray(j?.Subreddits)?j.Subreddits:[];const subs=a.map(s=>String(s).replace(/^r\//i,'').trim()).filter(Boolean);if(!subs.length)throw 0;return subs};
-const init=async()=>{try{S.subs=await loadSubs()}catch{showErr('Failed to load subreddits.json (expected {"Subreddits": [ ... ]})');return}const i0=addPlaceholder();await fill(i0);ensureRendered(0);updateCand();S.scrolling=false;commit()};
+const loadSubs=async()=>{
+  const r=await fetch('./subreddits.json');if(!r.ok)throw 0;
+  const j=await r.json();
+  const a=Array.isArray(j?.Subreddits)?j.Subreddits:[];
+  const subs=a.map(s=>String(s).replace(/^r\//i,'').trim()).filter(Boolean);
+  if(!subs.length)throw 0;
+  return subs
+};
+const init=async()=>{
+  try{S.subs=await loadSubs()}
+  catch(e){showErr('Failed to load subreddits.json (expected {"Subreddits": [ ... ]})');return}
+  const i0=addPlaceholder();
+  await fill(i0);
+  ensureRendered(0);
+  updateCand();
+  S.scrolling=false;
+  commit()
+};
 const consent=()=>{localStorage.setItem('adult_ok','1');document.getElementById('gate')?.remove();init()};
 const showGate=()=>{const g=document.getElementById('gate');g.style.display='grid';g.querySelector('.enter').onclick=consent;g.querySelector('.leave').onclick=()=>location.href='https://www.reddit.com'};
 localStorage.getItem('adult_ok')==='1'?init():showGate();
 
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&S.active){S.active.dataset.kind==='video'?S.active.querySelector('video')?.pause():S.active.querySelector('iframe')?.setAttribute('src','about:blank')}else commit()});
+})();
 </script>
 </body>
 </html>
