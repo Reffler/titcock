@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<title>Hot videos — ultra-gentle on requests</title>
+<title>Hot videos — capped & quick</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E">
 <style>
   :root{--overlay:linear-gradient(180deg,rgba(0,0,0,.7),rgba(0,0,0,.35) 60%,transparent);--title-pad:clamp(10px,2.2vh,16px);--title-size:clamp(14px,2.1vh,18px)}
@@ -41,35 +41,37 @@
 <script type="module">
 import { Geddit } from './geddit.min.js';
 (async()=>{
-// ================= CONFIG (strict cap + “load-active-only”) =================
+// ================= CONFIG (hard cap + faster feel) =================
 const CFG={
   INCLUDE_NSFW:true,
 
-  // Hard global cap: NEVER exceed this many JSON calls per any rolling minute.
+  // Hard global cap: NEVER exceed this many JSON calls in any rolling minute.
   JSON_PER_MIN_CAP: 60,
 
-  // Extra spacing to keep gentle (you can raise/lower).
-  MIN_REQ_GAP_MS: 1200,          // gap between JSON calls
-  GLOBAL_BACKOFF_MS: 20000,      // backoff when we see errors/empty
+  // Faster but safe pacing (minute cap still enforced)
+  MIN_REQ_GAP_MS: 900,           // spacing between JSON calls
+  GLOBAL_BACKOFF_MS: 20000,
 
-  // Rendering & prefetch
-  RENDER_BACK: 1,                // render 1 previous
-  RENDER_AHEAD: 1,               // render 1 next
-  PREFETCH_NEXT: false,          // set true to prefetch the next slide’s media
+  // Render window
+  RENDER_BACK: 1,
+  RENDER_AHEAD: 1,
 
-  // Pooling (tiny)
-  POOL_TARGET: 3,
-  REFILL_MIN_GAP_MS: 8000,
+  // Prefetch: promote next placeholder from pool (no JSON/media)
+  PREFETCH_NEXT: true,
 
-  // Intersection & settle
-  ACTIVATE_THRESHOLD: .75,
-  SETTLE_DELAY_MS: 160,
+  // Pooling
+  POOL_TARGET: 5,                // small warm pool
+  REFILL_MIN_GAP_MS: 3000,       // quicker background refills
 
-  // Video/iframe
+  // IO + settle
+  ACTIVATE_THRESHOLD: .7,
+  SETTLE_DELAY_MS: 140,
+
+  // Media
   NEXT_PRELOAD: 'metadata',
 
-  // Probes (off-DOM)
-  PROBE_RPM: 4,
+  // Probes
+  PROBE_RPM: 6,
 
   // Preconnect budget
   MAX_PRECONNECTS_PER_MIN: 1
@@ -82,15 +84,15 @@ const S={
   subs:[],
   lastReqAt:0,
   backoffUntil:0,
-  timeline:[],           // records
-  rendered:new Map(),    // idx->element
+  timeline:[],
+  rendered:new Map(),
   active:null,
   cand:null,
   ratios:new Map(),
   subState:new Map(),    // sub -> {after, seen:Set, queue:[]}
-  pool:[],               // ready candidates (no network to *render*, only when used)
-  bad:new Set(),         // bad postIds
-  seenAll:new Set(),     // global seen ids
+  pool:[],
+  bad:new Set(),
+  seenAll:new Set(),
   refilling:false,
   lastRefillAt:0,
   filling:new Set(),
@@ -101,20 +103,21 @@ const S={
 // ================= NET GATES =================
 const now=()=>Date.now();
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+// Minute-bucket hard cap
 const minuteCapGate=(cap=>{
-  const tms=[]; // timestamps of last JSON calls
+  const tms=[];
   return async()=>{
     for(;;){
       const t=now();
-      // drop entries older than 60s
       while(tms.length && t - tms[0] >= 60000) tms.shift();
       if(tms.length < cap){ tms.push(t); return; }
-      const wait = 60000 - (t - tms[0]);
-      await sleep(wait);
+      await sleep(60000 - (t - tms[0]));
     }
   };
 })(Math.max(1, CFG.JSON_PER_MIN_CAP));
 
+// Per-request spacing + error backoff
 const rateGate=async()=>{
   let wait=0, t=now();
   if(t<S.backoffUntil) wait=Math.max(wait, S.backoffUntil-t);
@@ -124,14 +127,14 @@ const rateGate=async()=>{
   S.lastReqAt=now();
 };
 
-// Smoothed RPM gates
+// Probe RPM gate
 const makeSequentialGate=perMin=>{
   const iv=60000/Math.max(1,perMin);let last=0;
   return async(mult=1)=>{const t=now();const w=Math.max(0,iv*mult-(t-last));if(w)await sleep(w);last=now()};
 };
 const gatePROBE=makeSequentialGate(CFG.PROBE_RPM);
 
-// ================= SMALL HELPERS =================
+// ================= HELPERS =================
 const pick=a=>a[(Math.random()*a.length)|0];
 const unesc=s=>(s||'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'");
 const posterOf=d=>unesc(d.preview?.images?.[0]?.source?.url)||(/^(https?:\/\/)/.test(d.thumbnail)&&!/(self|default|nsfw|image)/i.test(d.thumbnail)?d.thumbnail:'');
@@ -154,17 +157,16 @@ const maybePreconnect=url=>{try{
   ['preconnect','dns-prefetch'].forEach(rel=>{const l=document.createElement('link');l.rel=rel;l.href=o;document.head.appendChild(l)})
 }catch(e){}};
 
-// ================= RATE-GATED API (with minute cap) =================
-const inflightJSON=new Map(); // key -> Promise
+// ================= RATE-GATED API (with minute cap & dedupe) =================
+const inflightJSON=new Map();
 const fetchHotPage=async(sub,after=null)=>{
   const key=sub+'|'+(after||'');
   if(inflightJSON.has(key)) return inflightJSON.get(key);
   const p=(async()=>{
     try{
-      await minuteCapGate();          // <- never exceed 60/min
-      await rateGate();               // <- spacing / backoff
-      const o={include_over_18:CFG.INCLUDE_NSFW};
-      if(after) o.after=after;
+      await minuteCapGate();      // strict 60/min max
+      await rateGate();           // spacing + backoff
+      const o={include_over_18:CFG.INCLUDE_NSFW}; if(after) o.after=after;
       const r=await api.getSubmissions('hot',sub,o);
       if(!r||!Array.isArray(r.posts)) throw Error('bad');
       return {items:r.posts.map(p=>p.data||p),after:r.after||null};
@@ -193,7 +195,7 @@ const recFrom=(sub,d)=>{
   return o?{idx:S.timeline.length,sub,postId:d.name||d.id,kind:'iframe',src:addAutoParams(o),poster:'',bg:bg||'',title,url,created,playedOnce:false,prio:0}:null;
 };
 
-// ================= POOL REFILL (tiny, gentle) =================
+// ================= POOL REFILL =================
 const refillSubQueue=async(sub)=>{
   const st=gSub(sub);
   if(st.queue.length) return;
@@ -206,14 +208,17 @@ const refillSubQueue=async(sub)=>{
   }
   st.after=after||st.after;
 };
-const ensurePoolFilled=async()=>{
+
+const ensurePoolFilled=async(urgent=false)=>{
   if(S.refilling) return;
-  const t=now(); if(t-(S.lastRefillAt||0)<CFG.REFILL_MIN_GAP_MS) return;
+  const t=now();
+  if(!urgent && t-(S.lastRefillAt||0)<CFG.REFILL_MIN_GAP_MS) return;
   S.refilling=true; S.lastRefillAt=t;
   try{
     const need=CFG.POOL_TARGET-S.pool.length; if(need<=0) return;
     const subs=[...S.subs];
-    for(let i=0;i<1 && S.pool.length<CFG.POOL_TARGET && subs.length;i++){
+    const bursts = urgent ? 2 : 1; // small urgent burst
+    for(let i=0;i<bursts && S.pool.length<CFG.POOL_TARGET && subs.length;i++){
       const sub=pick(subs); subs.splice(subs.indexOf(sub),1);
       await refillSubQueue(sub);
       const st=gSub(sub);
@@ -231,6 +236,7 @@ const ensurePoolFilled=async()=>{
     S.refilling=false; S.lastRefillAt=now();
   }
 };
+
 const takeFromPool=()=>{if(!S.pool.length)return null;const rec=S.pool.shift();gSub(rec.sub).seen.add(rec.postId);S.seenAll.add(rec.postId);return rec};
 
 // ================= BADGE =================
@@ -238,14 +244,14 @@ const badgeCtrl=el=>{
   if(el._badge) return el._badge;
   const b=el.querySelector('.loading-badge');
   const c={v:false,t:null,last:0,
-    show(){if(!b||c.v||c.t)return;c.t=setTimeout(()=>{c.t=null;c.v=true;c.last=now();b.style.display='flex'},120)},
-    hide(){if(!b)return;const end=()=>{c.v=false;c.last=now();b.style.display='none'};if(c.v){const e=now()-c.last;if(e>=140)end();else setTimeout(end,140-e)}else if(c.t){clearTimeout(c.t);c.t=null}}
+    show(){if(!b||c.v||c.t)return;c.t=setTimeout(()=>{c.t=null;c.v=true;c.last=now();b.style.display='flex'},110)},
+    hide(){if(!b)return;const end=()=>{c.v=false;c.last=now();b.style.display='none'};if(c.v){const e=now()-c.last;if(e>=130)end();else setTimeout(end,130-e)}else if(c.t){clearTimeout(c.t);c.t=null}}
   };
   return(el._badge=c);
 };
 
-// ================= GUARDS / SWAPS =================
-const probeVideo=(src,timeout=500)=>new Promise(async resolve=>{
+// ================= PROBE & FAST REPLACE =================
+const probeVideo=(src,timeout=450)=>new Promise(async resolve=>{
   await gatePROBE();
   try{
     const v=document.createElement('video');
@@ -256,13 +262,15 @@ const probeVideo=(src,timeout=500)=>new Promise(async resolve=>{
     v.onerror=()=>cleanup(false);
   }catch(e){resolve(false)}
 });
+
+// Urgent replace for active placeholders (still respects cap)
 const fastReplace=async (idx)=>{
-  await ensurePoolFilled();
+  await ensurePoolFilled(true); // urgent
   let tries=0,rec=null;
   while(tries<2){
     rec=takeFromPool();
     if(!rec){
-      await ensurePoolFilled();
+      await ensurePoolFilled(true);
       rec=takeFromPool();
       if(!rec)break;
     }
@@ -287,7 +295,7 @@ const baseSlide=(idx,kind,sub,bg,title)=>{
 const addVideo=(s,m,r)=>{
   const v=document.createElement('video');
   Object.assign(v,{loop:true,muted:true,autoplay:false,controls:false,preload:'none'});
-  v.setAttribute('muted',''); v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline','');
+  v.setAttribute('muted','');v.setAttribute('playsinline','');v.setAttribute('webkit-playsinline','');
   v.disablePictureInPicture=v.disableRemotePlayback=v.playsInline=true;
   v.dataset.src=r.src; v.dataset.idx=r.idx; if(r.poster) v.poster=r.poster;
   m.appendChild(v); bindReveal(s,v); return v;
@@ -297,8 +305,7 @@ const renderSlide=r=>{
   const m=s.querySelector('.media');
   if(r.kind!=='pending') renderTitle(s,r);
   if(r.kind==='pending'){
-    // NOTE: No quickSwap here. We purposely DO NOT fetch until user settles on this slide.
-    m.appendChild(badgeEl('Waiting…'));
+    m.appendChild(badgeEl('Loading…'));
     return s;
   }
   if(r.poster){const i=document.createElement('img');i.className='thumb';i.loading='eager';i.decoding='async';i.src=r.poster;m.appendChild(i)}
@@ -341,15 +348,14 @@ const addPlaceholder=()=>{
   S.timeline.push(rec); ensureRendered(idx); return idx;
 };
 const ensurePlaceholdersAhead=i=>{
-  // Only ensure placeholders exist; DO NOT start loading them.
-  const need=i+1; // keep at least one ahead
+  const need=i+1;
   while(S.timeline.length<need+1) addPlaceholder();
 };
 
-// ================= IO / CANDIDATE (no fetch on IO change) =================
+// ================= IO / CANDIDATE =================
 const io=new IntersectionObserver(es=>{
   for(const e of es) S.ratios.set(e.target,e.intersectionRatio);
-  const c=best(); if(c) S.cand=c; // defer actual loading to commit() after settle
+  const c=best(); if(c) S.cand=c;
 },{root:app,threshold:[0,CFG.ACTIVATE_THRESHOLD,1]});
 const obs=s=>io.observe(s);
 const best=()=>{let b=null,rb=CFG.ACTIVATE_THRESHOLD;for(const [el,r] of S.ratios){if(!app.contains(el)){S.ratios.delete(el);continue}if(r>rb){rb=r;b=el}}return b};
@@ -376,7 +382,7 @@ const bindReveal=(slide,video)=>{
     ('requestVideoFrameCallback'in video)
       ? video.requestVideoFrameCallback?.(()=>reveal())
       : video.addEventListener('timeupdate',function onTU(){if(video.currentTime>0){video.removeEventListener('timeupdate',onTU);reveal()}},{once:true});
-    setTimeout(()=>{if(!revealed)reveal()},140);
+    setTimeout(()=>{if(!revealed)reveal()},120);
   });
   video.addEventListener('loadeddata',badge);
   video.addEventListener('waiting',badge);
@@ -384,16 +390,15 @@ const bindReveal=(slide,video)=>{
   video.addEventListener('error',()=>{badgeCtrl(slide).show();slide.querySelector('.loading-badge span')&&(slide.querySelector('.loading-badge span').textContent='Tap to retry')});
 };
 
-// Load ONLY the active index (and optionally the next)
+// Load ONLY the active index; optionally promote next from pool (no JSON)
 const loadForIndex=async idx=>{
-  // Ensure there is a placeholder for next slide, but do not load it yet.
   ensurePlaceholdersAhead(idx);
 
-  // Upgrade active
+  // Upgrade active quickly
   const r=S.timeline[idx];
   if(r && r.kind==='pending') await fastReplace(idx);
 
-  // Tiny optional prefetch for the next slide’s record—not media load
+  // Promote next placeholder from pool (no network)
   if(CFG.PREFETCH_NEXT){
     const nx=idx+1;
     if(nx < S.timeline.length && S.timeline[nx]?.kind==='pending' && S.pool.length>0){
@@ -403,11 +408,10 @@ const loadForIndex=async idx=>{
   }
 };
 
-// Render window around active without triggering loads
+// Render minimal window around active
 const renderWindow=idx=>{
   const min=Math.max(0,idx-CFG.RENDER_BACK), max=Math.min(S.timeline.length-1,idx+CFG.RENDER_AHEAD);
   for(let i=min;i<=max;i++) ensureRendered(i);
-  // Optionally unrender far-away elements (keeps DOM small)
   for(const k of [...S.rendered.keys()]){
     if(k<min-2 || k>max+2) unrender(k);
   }
@@ -415,24 +419,21 @@ const renderWindow=idx=>{
 
 // ================= ACTIVATE =================
 const commit=async()=>{
-  if(S.scrolling) return;              // never load while scrolling
+  if(S.scrolling) return;
   const c=S.cand||best(); if(!c) return;
   const idx=+c.dataset.idx;
 
-  // Render minimal window around active
   renderWindow(idx);
 
-  // Keep a tiny pool ready; refill is gentle & capped
-  await ensurePoolFilled();
+  // Keep a small ready pool; urgent=false here (background)
+  await ensurePoolFilled(false);
 
-  // Load active (only)
+  // Load active only (urgent path inside fastReplace)
   await loadForIndex(idx);
 
-  // Set as active (playback attach happens below)
+  // Set as active and manage media
   if(S.active!==c) S.active=c;
 
-  // Minimal attach logic: only active auto-plays; next/prev metadata only
-  const el=S.active;
   for(const [i,sl] of S.rendered){
     const k=sl.dataset.kind;
     const role = i===idx ? 'active' : (i===idx-1?'prev':(i===idx+1?'next':'other'));
@@ -446,20 +447,18 @@ const commit=async()=>{
       else if(role==='prev'){attach(v,'metadata'); badgeCtrl(sl).hide(); v.pause();}
       else {detach(v); badgeCtrl(sl).hide();}
     } else if(k==='iframe'){
-      if(role==='active'){ const f=sl.querySelector('iframe'); startIfr(f); }
+      if(role==='active'){ startIfr(sl.querySelector('iframe')); }
       else { stopIfr(sl.querySelector('iframe')); }
       badgeCtrl(sl).hide();
     }
   }
 
-  // Make sure there's always at least one placeholder beyond
   ensurePlaceholdersAhead(idx);
 };
 
-// ================= STARTUP + GATE =================
+// ================= STARTUP =================
 const showErr=msg=>{const h=app.querySelector('.slide');if(h)h.innerHTML='<div class="error">'+msg+'</div>'};
 const loadSubs=async()=>{
-  // You can swap this file name based on filter toggles, etc.
   const r=await fetch('./subreddits.json'); if(!r.ok) throw 0;
   const j=await r.json();
   const a=Array.isArray(j?.Subreddits)?j.Subreddits:[];
@@ -472,14 +471,12 @@ const init=async()=>{
   try{ S.subs=await loadSubs(); }
   catch(e){ showErr('Failed to load subreddits.json (expected {"Subreddits": [ ... ]})'); return; }
 
-  // seed one placeholder
-  const i0=S.timeline.length; addPlaceholder();
-
-  // render and pick candidate (but DO NOT fetch yet)
-  ensureRendered(i0);
+  const i0=addPlaceholder(); ensureRendered(i0);
   S.cand=app.querySelector('.slide');
 
-  // after initial settle, commit will fetch only the active
+  // Warm the pool once so first slide is quick (respects caps)
+  await ensurePoolFilled(true);
+
   S.scrolling=false;
   await commit();
 };
