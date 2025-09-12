@@ -6,777 +6,182 @@
 <title>Hot videos — 1-per-sub, cached, ultra-smooth</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E">
 <style>
-  :root{
-    --overlay:linear-gradient(180deg, rgba(0,0,0,.7) 0, rgba(0,0,0,.35) 60%, transparent 100%);
-    --title-pad: clamp(10px, 2.2vh, 16px);
-    --title-size: clamp(14px, 2.1vh, 18px);
-  }
-  *{box-sizing:border-box}
-  html,body{height:100%}
-  body{
-    margin:0;background:#000;color:#fff;
-    font-family:system-ui,Segoe UI,Inter,Roboto,Arial;
-  }
-
-  /* Full-viewport vertical scroller; hide scrollbar */
-  #app{
-    position:fixed; inset:0;
-    height:100svh;
-    overflow-y:scroll;
-    scroll-snap-type:y mandatory;
-    -webkit-overflow-scrolling:touch;
-    background:#000;
-    scrollbar-width:none; -ms-overflow-style:none;
-  }
+  :root{--overlay:linear-gradient(180deg,rgba(0,0,0,.7),rgba(0,0,0,.35) 60%,transparent);--title-pad:clamp(10px,2.2vh,16px);--title-size:clamp(14px,2.1vh,18px)}
+  *{box-sizing:border-box}html,body{height:100%}body{margin:0;background:#000;color:#fff;font-family:system-ui,Segoe UI,Inter,Roboto,Arial}
+  #app{position:fixed;inset:0;height:100svh;overflow-y:scroll;scroll-snap-type:y mandatory;-webkit-overflow-scrolling:touch;background:#000;scrollbar-width:none;-ms-overflow-style:none}
   #app::-webkit-scrollbar{width:0;height:0}
-
-  .slide{
-    position:relative; height:100svh; width:100%;
-    scroll-snap-align:start; display:grid; place-items:center;
-    background:#000; overflow:hidden; touch-action:manipulation;
-    contain: layout paint;
-  }
-
-  /* Background blur fill */
-  .bg{ position:absolute; inset:0; z-index:0; pointer-events:none; overflow:hidden; }
-  .bg > img{
-    position:absolute; inset:0; width:100%; height:100%;
-    object-fit:cover; filter:blur(24px) brightness(.45); transform:scale(1.06);
-    will-change:transform,filter;
-  }
-
-  /* Media: fully visible, any aspect ratio */
-  .media{
-    position:relative; z-index:1; width:100%; height:100%;
-    display:grid; place-items:center;
-  }
-  .media > video, .media > iframe{
-    width:100%; height:100%;
-    object-fit:contain;
-    max-width:100vw; max-height:100svh;
-    display:block; background:transparent;
-  }
-
-  /* Thumb ABOVE the video until first painted frame (prevents black flash) */
-  .thumb{
-    position:absolute; inset:0; width:100%; height:100%;
-    object-fit:contain; display:block; background:transparent;
-    z-index:3; transition:opacity .14s linear;
-  }
-
-  /* Video fades in after first real frame; keep visible during loops */
-  .media > video{
-    opacity:0; transition:opacity .18s ease;
-    z-index:2; will-change:opacity;
-    background-color:transparent !important;
-  }
-  .media > video.is-playing{ opacity:1; }
-
-  /* Title overlay at top: ALWAYS visible */
-  .title{
-    position:absolute; left:0; right:0; top:0; z-index:4;
-    padding: calc(env(safe-area-inset-top) + var(--title-pad)) var(--title-pad) var(--title-pad);
-    background:var(--overlay);
-    font-weight:700; font-size:var(--title-size); line-height:1.25;
-    text-shadow:0 1px 2px rgba(0,0,0,.7);
-  }
-
-  /* Loading badge (debounced programmatically, no flicker) */
-  .loading-badge{
-    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
-    display:none; align-items:center; gap:10px;
-    padding:10px 12px; border-radius:999px;
-    background-color: rgba(0,0,0,.45);
-    backdrop-filter: blur(4px);
-    font-size:13px; color:#e6e6e6;
-    will-change:opacity;
-    z-index:4;
-  }
-  .loading-badge .spinner{
-    width:18px; height:18px; border:2px solid #666; border-top-color:#fff; border-radius:50%;
-    animation:spin 0.9s linear infinite;
-  }
+  .slide{position:relative;height:100svh;width:100%;scroll-snap-align:start;display:grid;place-items:center;background:#000;overflow:hidden;touch-action:manipulation;contain:layout paint}
+  .bg{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+  .bg>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:blur(24px) brightness(.45);transform:scale(1.06);will-change:transform,filter}
+  .media{position:relative;z-index:1;width:100%;height:100%;display:grid;place-items:center}
+  .media>video,.media>iframe{width:100%;height:100%;object-fit:contain;max-width:100vw;max-height:100svh;display:block;background:transparent}
+  .thumb{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;background:transparent;z-index:3;transition:opacity .14s linear}
+  .media>video{opacity:0;transition:opacity .18s ease;z-index:2;will-change:opacity;background-color:transparent!important}
+  .media>video.is-playing{opacity:1}
+  .title{position:absolute;left:0;right:0;top:0;z-index:4;padding:calc(env(safe-area-inset-top) + var(--title-pad)) var(--title-pad) var(--title-pad);background:var(--overlay);font-weight:700;font-size:var(--title-size);line-height:1.25;text-shadow:0 1px 2px rgba(0,0,0,.7)}
+  .loading-badge{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:none;align-items:center;gap:10px;padding:10px 12px;border-radius:999px;background-color:rgba(0,0,0,.45);backdrop-filter:blur(4px);font-size:13px;color:#e6e6e6;will-change:opacity;z-index:4}
+  .loading-badge .spinner{width:18px;height:18px;border:2px solid #666;border-top-color:#fff;border-radius:50%;animation:spin .9s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
-
-  .empty,.error{color:#bbb; text-align:center; padding:24px}
-  .big-spinner{width:28px;height:28px;border:3px solid #333;border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto}
+  .empty,.error{color:#bbb;text-align:center;padding:24px}.big-spinner{width:28px;height:28px;border:3px solid #333;border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto}
+.title .meta{margin-top:6px;opacity:.9;font-weight:600;font-size:12px}.title a{color:#fff;text-decoration:none}.title a:hover{text-decoration:underline}.gate{position:fixed;inset:0;display:none;place-items:center;background:rgba(0,0,0,.9);color:#eee;z-index:9999;padding:24px}.gate .card{max-width:720px;background:rgba(20,20,20,.8);backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:20px;text-align:left;box-shadow:0 10px 30px rgba(0,0,0,.5)}.gate h2{margin:0 0 8px 0}.gate p{margin:0 0 14px 0;line-height:1.4}.gate .actions{display:flex;gap:10px;justify-content:flex-end}.gate button{cursor:pointer;border:0;border-radius:999px;padding:10px 14px;font-weight:700}.gate .enter{background:#fff;color:#000}.gate .leave{background:#333;color:#eee}
+#hamb{position:fixed;left:8px;right:auto;top:calc(env(safe-area-inset-top) + 8px);z-index:999;width:38px;height:38px;border-radius:10px;border:0;background:rgba(255,255,255,.1);color:#fff;font-size:20px;display:grid;place-items:center;cursor:pointer;backdrop-filter:blur(6px)}#hamb:active{transform:scale(.98)}.drawer{position:fixed;inset:0;z-index:998;pointer-events:none;overscroll-behavior:contain}.drawer::before{content:"";position:absolute;inset:0;background:rgba(0,0,0,.45);opacity:0;transition:opacity .2s}.drawer .panel{position:absolute;right:0;left:auto;top:0;bottom:0;width:min(86vw,420px);background:#111;border-left:1px solid rgba(255,255,255,.12);transform:translateX(102%);transition:transform .25s ease;padding:clamp(8px,2vh,14px);display:flex;flex-direction:column;gap:10px}.drawer.open{pointer-events:auto}.drawer.open::before{opacity:1}.drawer.open .panel{transform:translateX(0)}#subSearch{width:100%;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:#1a1a1a;color:#fff}#subList{overflow:auto;-webkit-overflow-scrolling:auto;overscroll-behavior:contain;touch-action:pan-y;flex:1}#subList label{display:flex;align-items:center;gap:10px;height:44px;padding:0 8px;border-radius:10px}#subList label:hover{background:rgba(255,255,255,.06)}#subList input{width:22px;height:22px}
+.drawer .panel .actions{display:flex;gap:8px;align-items:center}.drawer .panel .actions .spacer{flex:1}.drawer .panel .actions button{cursor:pointer;border:0;border-radius:999px;padding:8px 12px;font-weight:700;background:#1f1f1f;color:#fff;border:1px solid rgba(255,255,255,.12)}.drawer .panel .actions button:hover{background:#262626}.drawer .panel .filters button.pill{border-radius:999px;padding:6px 10px}.pill.on{background:#fff;color:#000}
+.modal{position:fixed;inset:0;display:none;place-items:center;background:rgba(0,0,0,.55);z-index:1000;padding:24px}.modal.open{display:grid}.modal .card{max-width:560px;width:min(92vw,560px);background:rgba(20,20,20,.92);backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:16px}.modal .card header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}.modal .card h3{margin:0}.modal .card .close{cursor:pointer;border:0;border-radius:8px;background:#1f1f1f;color:#fff;padding:6px 10px}.modal .row{display:flex;gap:10px;align-items:center;padding:8px 0}
+.drawer .panel .sticky{position:sticky;top:0;background:#111;z-index:2;padding-bottom:6px}.drawer .panel .sticky:after{content:"";display:block;height:1px;background:rgba(255,255,255,.08)}#alpha{position:absolute;right:6px;top:92px;bottom:10px;display:flex;flex-direction:column;align-items:center;gap:2px;user-select:none;touch-action:none;z-index:3}#alpha span{padding:4px 6px;font-size:12px;opacity:.75;border-radius:6px}#alpha span.active{background:rgba(255,255,255,.18);opacity:1}
+#hamb,.drawer,.drawer-backdrop,.subs-search{display:none!important}
 </style>
 </head>
 <body>
+<div id="gate" class="gate"><div class="card"><h2>Disclaimer</h2><p>This website curates and displays adult-oriented material sourced exclusively via publicly available Reddit RSS feeds. All videos, images, and posts remain the property of their original creators and are hosted on Reddit’s servers. We do not upload, host, or store any media files. By continuing to use this site, you confirm you are of legal age to view adult material in your jurisdiction.</p><div class="actions"><button class="enter">I am of legal age</button><button class="leave">Leave</button></div></div></div>
+<button id="hamb" aria-label="Menu">☰</button>
+<div id="drawer" class="drawer"><div class="panel"><div class="sticky"><input id="subSearch" placeholder="Search subs…" autocomplete="off"><div class="actions"><button id="selAll">Select all</button><button id="unselAll">Unselect all</button><span class="spacer"></span><button id="filtersBtn" class="pill" title="Filters">Filters</button></div></div><div id="subList"></div><div id="alpha" aria-hidden="true"></div></div></div>
+<div id="filtersModal" class="modal"><div class="card"><header><h3>Filters</h3><button class="close" id="filtersClose">Close</button></header><div class="row"><label><input type="checkbox" id="filterBoob"> boob (use boobs.json)</label></div></div></div>
 <main id="app">
-  <section class="slide">
-    <div class="empty">
-      <div class="big-spinner"></div>
-      <div style="margin-top:10px">Loading first video…</div>
-    </div>
-  </section>
+  <section class="slide"><div class="empty"><div class="big-spinner"></div><div style="margin-top:10px">Loading first video…</div></div></section>
 </main>
-
 <script type="module">
-  import { Geddit } from './geddit.min.js';
-
-  // ---------- CONFIG ----------
-  const QUERY_SUB = new URLSearchParams(location.search).get('sub'); // optional first sub override
-  const CFG = {
-    INCLUDE_NSFW: true,
-    MIN_REQ_GAP_MS: 1200,
-    MAX_PAGES_PER_PICK: 4,
-    CANDIDATE_TRIES: 28,
-    RECENT_WINDOW: 24,
-    NEXT_PRELOAD: 'metadata',
-    GLOBAL_BACKOFF_MS: 5000,
-    HISTORY_BACK: 80,
-    AHEAD_MAX: 3,
-    BADGE_DELAY_MS: 160,
-    BADGE_MIN_VISIBLE_MS: 250,
-    SETTLE_DELAY_MS: 140,
-    ACTIVATE_THRESHOLD: 0.75
-  };
-
-  // ---------- STATE ----------
-  const api = new Geddit();
-  const app = document.getElementById('app');
-
-  const state = {
-    subsList: [],
-    lastReqAt: 0,
-    backoffUntil: 0,
-
-    // Cached timeline (stable order for temporal coherence)
-    // { idx, sub, postId, kind: 'video'|'iframe'|'pending', src, poster, bg, title, playedOnce?:bool }
-    timeline: [],
-    rendered: new Map(),
-
-    activeSlide: null,
-    candidateSlide: null,
-    ratios: new Map(),
-
-    recentSubs: [],
-    subProgress: new Map(),
-    fillingIdx: new Set(),
-
-    scrolling: false,
-    settleTimer: null,
-    settledAt: 0
-  };
-
-  // ---------- UTILS ----------
-  const sleep = ms => new Promise(r=>setTimeout(r,ms));
-  const now = () => Date.now();
-  const pick = arr => arr[(Math.random()*arr.length)|0];
-  const unesc = s => (s||'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'");
-  const isDirectVideo = u => /^https?:\/\//.test(u||'') && /\.(mp4|webm|m4v)$/i.test(u||'');
-  const normalizeGifv = u => u && /\.gifv$/i.test(u) ? u.replace(/\.gifv$/i,'.mp4') : u;
-
-  function posterOf(d){
-    const p = d.preview?.images?.[0]?.source?.url;
-    if (p) return unesc(p);
-    const t = d.thumbnail;
-    if (t && /^https?:\/\//.test(t) && !/(self|default|nsfw|image)/i.test(t)) return t;
-    return '';
-  }
-  function redditVideoOf(d){
-    const rv = d.secure_media?.reddit_video || d.media?.reddit_video;
-    if (rv?.fallback_url) return rv.fallback_url;
-    const pv = d.preview?.reddit_video_preview;
-    if (pv?.fallback_url) return pv.fallback_url;
-    return null;
-  }
-  function oembedSrcOf(d){
-    const o = d.secure_media?.oembed || d.media?.oembed;
-    if (!o?.html) return null;
-    const frag = new DOMParser().parseFromString(o.html,'text/html');
-    const ifr = frag.querySelector('iframe');
-    return ifr ? ifr.getAttribute('src') : null;
-  }
-  function urlWithAutoplayLoop(src){
-    try{
-      const u = new URL(src, location.href);
-      const host = u.hostname.toLowerCase();
-      const set = (k,v)=>u.searchParams.set(k,v);
-      set('autoplay','1'); set('muted','1'); set('playsinline','1'); set('loop','1');
-      if (host.includes('youtube.com') || host.includes('youtu.be')){
-        set('controls','0'); set('modestbranding','1'); set('rel','0'); set('enablejsapi','1');
-        const id = u.hostname.includes('youtu.be')
-          ? u.pathname.split('/')[1]
-          : (u.pathname.match(/\/embed\/([^/?#]+)/)?.[1] || u.searchParams.get('v') || '');
-        if (id) set('playlist', id);
-      }
-      if (host.includes('vimeo.com')) set('background','1');
-      return u.toString();
-    }catch{ return src; }
-  }
-
-  // ---------- GEDDIT (rate-gated) ----------
-  async function rateGate(){
-    let wait = 0;
-    const t = now();
-    if (t < state.backoffUntil) wait = Math.max(wait, state.backoffUntil - t);
-    const since = t - state.lastReqAt;
-    if (since < CFG.MIN_REQ_GAP_MS) wait = Math.max(wait, CFG.MIN_REQ_GAP_MS - since);
-    if (wait) await sleep(wait);
-    state.lastReqAt = now();
-  }
-  async function fetchHotPage(sub, after=null){
-    try{
-      await rateGate();
-      const opts = { include_over_18: CFG.INCLUDE_NSFW };
-      if (after) opts.after = after;
-      const res = await api.getSubmissions('hot', sub, opts);
-      if (!res || !Array.isArray(res.posts)) throw new Error('bad_response');
-      return { items: res.posts.map(p=>p.data||p), after: res.after || null };
-    } catch {
-      state.backoffUntil = now() + CFG.GLOBAL_BACKOFF_MS;
-      return { items: [], after: null };
-    }
-  }
-
-  // ---------- SUB RECENCY ----------
-  function getSubState(sub){
-    if (!state.subProgress.has(sub)){
-      state.subProgress.set(sub, { after: null, seen: new Set() });
-    }
-    return state.subProgress.get(sub);
-  }
-  function markSubUsed(sub){
-    state.recentSubs.push(sub);
-    if (state.recentSubs.length > CFG.RECENT_WINDOW) state.recentSubs.shift();
-  }
-  function pickRandomSubAvoidingRecent(tried){
-    const recent = new Set(state.recentSubs);
-    const pool = state.subsList.filter(s => !recent.has(s) && !tried.has(s));
-    if (pool.length) return pick(pool);
-    const pool2 = state.subsList.filter(s => !tried.has(s));
-    if (pool2.length) return pick(pool2);
-    return pick(state.subsList);
-  }
-
-  // ---------- PICK ONE PLAYABLE ----------
-  async function pickOneUnseenFromSub(sub){
-    const st = getSubState(sub);
-    const seen = st.seen;
-    let after = st.after;
-    for (let page=0; page<CFG.MAX_PAGES_PER_PICK; page++){
-      const { items, after: nextAfter } = await fetchHotPage(sub, after);
-      if (!items.length) break;
-      for (const d of items){
-        const id = d.name || d.id;
-        const rv = redditVideoOf(d);
-        const direct = normalizeGifv(d.url_overridden_by_dest || d.url || '');
-        const embed = oembedSrcOf(d);
-        if (!seen.has(id) && (rv || isDirectVideo(direct) || embed)){
-          seen.add(id);
-          st.after = nextAfter || null;
-          return d;
-        }
-      }
-      after = nextAfter;
-      if (!after) break;
-    }
-    return null;
-  }
-  async function chooseSubWithOneUnseen(){
-    const tried = new Set();
-    for (let i=0; i<CFG.CANDIDATE_TRIES; i++){
-      const sub = (QUERY_SUB && state.timeline.length===0) ? QUERY_SUB : pickRandomSubAvoidingRecent(tried);
-      tried.add(sub);
-      const post = await pickOneUnseenFromSub(sub);
-      if (post) return { sub, post };
-    }
-    return null;
-  }
-
-  // ---------- RECORD ----------
-  function recordFromPost(sub, d){
-    const title = d.title || '(untitled)';
-    const bg = posterOf(d);
-    const rv = redditVideoOf(d);
-    const direct = normalizeGifv(d.url_overridden_by_dest || d.url || '');
-    if (rv || isDirectVideo(direct)){
-      return { idx: state.timeline.length, sub, postId:(d.name||d.id), kind:'video', src:(rv||direct), poster:bg||'', bg:bg||'', title, playedOnce:false };
-    }
-    const o = oembedSrcOf(d);
-    if (o){
-      return { idx: state.timeline.length, sub, postId:(d.name||d.id), kind:'iframe', src:urlWithAutoplayLoop(o), poster:'', bg:bg||'', title, playedOnce:false };
-    }
-    return null;
-  }
-
-  // ---------- BADGE (no flicker) ----------
-  function getBadgeCtrl(el){
-    if (el._badgeCtrl) return el._badgeCtrl;
-    const badge = el.querySelector('.loading-badge');
-    const ctrl = {
-      visible:false,
-      timer:null,
-      lastChange:0,
-      showDebounced(){
-        if (!badge || this.visible) return;
-        if (this.timer) return;
-        this.timer = setTimeout(()=>{
-          this.timer = null; this.visible = true; this.lastChange = now();
-          badge.style.display = 'flex';
-        }, CFG.BADGE_DELAY_MS);
-      },
-      hideStable(){
-        if (!badge) return;
-        const ensureHide = ()=>{ this.visible=false; this.lastChange=now(); badge.style.display='none'; };
-        if (this.visible){
-          const elapsed = now() - this.lastChange;
-          if (elapsed >= CFG.BADGE_MIN_VISIBLE_MS) ensureHide();
-          else setTimeout(ensureHide, CFG.BADGE_MIN_VISIBLE_MS - elapsed);
-        } else if (this.timer){ clearTimeout(this.timer); this.timer=null; }
-      }
-    };
-    el._badgeCtrl = ctrl;
-    return ctrl;
-  }
-
-  // ---------- NO-FLASH REVEAL ----------
-  function bindNoFlashReveal(slide, video){
-    if (video._noFlashBound) return;
-    video._noFlashBound = true;
-
-    const thumb = slide.querySelector('.thumb');
-    let revealed = false;
-
-    const reveal = ()=>{
-      if (revealed) return;
-      revealed = true;
-      video.classList.add('is-playing'); // fade in
-      if (thumb){
-        thumb.style.opacity = '0';
-        thumb.addEventListener('transitionend', ()=>{ thumb.style.display='none'; }, { once:true });
-      }
-      getBadgeCtrl(slide).hideStable();
-      const rec = state.timeline[+slide.dataset.idx]; if (rec) rec.playedOnce = true;
-    };
-
-    const showBadgeIfNeeded = ()=>{
-      // show the badge only before first reveal; ignore during loops/buffer hiccups
-      if (!revealed && !video.classList.contains('is-playing')) getBadgeCtrl(slide).showDebounced();
-    };
-
-    // Prefer exact first-painted-frame
-    const onPlaying = ()=>{
-      if ('requestVideoFrameCallback' in video){
-        try {
-          video.requestVideoFrameCallback(()=> reveal());
-        } catch { reveal(); }
-      } else {
-        // Fallback: reveal on first >0s timeupdate
-        const onTU = ()=>{
-          if (video.currentTime > 0) { video.removeEventListener('timeupdate', onTU); reveal(); }
-        };
-        video.addEventListener('timeupdate', onTU);
-        setTimeout(()=>{ if (!revealed) reveal(); }, 120);
-      }
-    };
-
-    video.addEventListener('playing', onPlaying);
-
-    // IMPORTANT: do NOT show loading on loops or after first reveal
-    video.addEventListener('loadeddata', showBadgeIfNeeded);
-    video.addEventListener('waiting', showBadgeIfNeeded);
-
-    // Loop seamlessly without showing the badge
-    video.addEventListener('ended', ()=>{
-      // keep is-playing class; no badge; simply restart
-      video.play().catch(()=>{});
-    });
-
-    video.addEventListener('error', ()=>{
-      const badge = getBadgeCtrl(slide); badge.showDebounced();
-      const s = slide.querySelector('.loading-badge span'); if (s) s.textContent = 'Tap to retry';
-    });
-
-    // Cached revisit: reveal immediately
-    const rec = state.timeline[+slide.dataset.idx];
-    if (rec?.playedOnce){
-      reveal();
-    }
-  }
-
-  // ---------- RENDER ----------
-  function buildLoadingBadge(text='Loading video…'){
-    const badge = document.createElement('div');
-    badge.className = 'loading-badge';
-    badge.innerHTML = `<div class="spinner"></div><span>${text}</span>`;
-    return badge;
-  }
-
-  function buildBaseSlide(idx, kind, sub, bgUrl, titleText){
-    const slide = document.createElement('section');
-    slide.className = 'slide';
-    slide.dataset.idx = String(idx);
-    slide.dataset.kind = kind;
-    slide.dataset.sub = sub || '';
-
-    const bg = document.createElement('div'); bg.className = 'bg';
-    const bgImg = document.createElement('img'); if (bgUrl) bgImg.src = bgUrl; bg.appendChild(bgImg);
-
-    const mediaWrap = document.createElement('div'); mediaWrap.className = 'media';
-
-    const title = document.createElement('div');
-    title.className = 'title';
-    title.textContent = titleText || '';
-
-    slide.appendChild(bg); slide.appendChild(mediaWrap); slide.appendChild(title);
-    observeSlide(slide);
-    return slide;
-  }
-
-  function addVideo(slide, mediaWrap, rec){
-    const v = document.createElement('video');
-    v.dataset.src = rec.src;
-    v.dataset.idx = String(rec.idx);
-    v.preload = 'none';
-    v.loop = true; v.muted = true; v.setAttribute('muted','');
-    v.autoplay = false; v.controls = false;
-    v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline','');
-    v.disablePictureInPicture = true; v.disableRemotePlayback = true;
-    v.playsInline = true;
-    if (rec.poster) v.poster = rec.poster;
-
-    mediaWrap.appendChild(v);
-    bindNoFlashReveal(slide, v);
-    return v;
-  }
-
-  function buildSlide(rec){
-    const slide = buildBaseSlide(rec.idx, rec.kind, rec.sub, rec.bg, rec.title || '');
-    const mediaWrap = slide.querySelector('.media');
-
-    if (rec.kind === 'pending'){
-      mediaWrap.appendChild(buildLoadingBadge('Fetching next video…'));
-      return slide;
-    }
-
-    if (rec.poster){
-      const img = document.createElement('img');
-      img.className = 'thumb';
-      img.loading = 'eager';
-      img.decoding = 'async';
-      img.src = rec.poster;
-      mediaWrap.appendChild(img);
-    }
-
-    mediaWrap.appendChild(buildLoadingBadge());
-
-    if (rec.kind === 'video'){
-      addVideo(slide, mediaWrap, rec);
-    } else if (rec.kind === 'iframe'){
-      const ifr = document.createElement('iframe');
-      ifr.src = 'about:blank';
-      ifr.dataset.autoplaySrc = rec.src;
-      ifr.allow = 'autoplay; fullscreen; picture-in-picture; encrypted-media';
-      ifr.referrerPolicy = 'no-referrer-when-downgrade';
-      ifr.frameBorder = '0';
-      mediaWrap.appendChild(ifr);
-    }
-    return slide;
-  }
-
-  function insertSlideInOrder(el){
-    const idx = +el.dataset.idx;
-    const rendered = [...state.rendered.keys()].sort((a,b)=>a-b);
-    const nextIdx = rendered.find(i => i > idx);
-    if (nextIdx != null) app.insertBefore(el, state.rendered.get(nextIdx));
-    else app.appendChild(el);
-    state.rendered.set(idx, el);
-    const ph = app.querySelector('.slide .empty');
-    if (ph) app.querySelector('.slide').remove();
-  }
-
-  function ensureRendered(idx){
-    if (state.rendered.has(idx)) return;
-    const rec = state.timeline[idx];
-    if (!rec) return;
-    const el = buildSlide(rec);
-    insertSlideInOrder(el);
-  }
-
-  // Upgrade pending → real in-place
-  function upgradeSlideInPlace(idx, rec){
-    const el = state.rendered.get(idx);
-    if (!el) { ensureRendered(idx); return; }
-
-    el.dataset.kind = rec.kind;
-    el.dataset.sub  = rec.sub || '';
-
-    const bgImg = el.querySelector('.bg img');
-    if (bgImg){ bgImg.src = rec.bg || bgImg.src; }
-    const title = el.querySelector('.title');
-    if (title){ title.textContent = rec.title || title.textContent; }
-
-    const mediaWrap = el.querySelector('.media');
-    mediaWrap.innerHTML = '';
-
-    if (rec.poster){
-      const img = document.createElement('img');
-      img.className = 'thumb';
-      img.loading = 'eager';
-      img.decoding = 'async';
-      img.src = rec.poster;
-      mediaWrap.appendChild(img);
-    }
-    mediaWrap.appendChild(buildLoadingBadge());
-
-    if (rec.kind === 'video'){
-      addVideo(el, mediaWrap, rec);
-    } else {
-      const ifr = document.createElement('iframe');
-      ifr.src = 'about:blank';
-      ifr.dataset.autoplaySrc = rec.src;
-      ifr.allow = 'autoplay; fullscreen; picture-in-picture; encrypted-media';
-      ifr.referrerPolicy = 'no-referrer-when-downgrade';
-      ifr.frameBorder = '0';
-      mediaWrap.appendChild(ifr);
-    }
-
-    if (el === state.candidateSlide && !state.scrolling) commitActive();
-  }
-
-  function unrender(idx){
-    const el = state.rendered.get(idx);
-    if (!el) return;
-    slideObserver.unobserve(el);
-    if (el.dataset.kind === 'video') detachSrc(el.querySelector('video'));
-    if (el.dataset.kind === 'iframe') stopIframe(el.querySelector('iframe'));
-    el.remove();
-    state.rendered.delete(idx);
-  }
-
-  function enforceWindow(activeIdx){
-    const min = Math.max(0, activeIdx - CFG.HISTORY_BACK);
-    const max = Math.min(state.timeline.length - 1, activeIdx + CFG.AHEAD_MAX);
-    for (let i=min; i<=max; i++) ensureRendered(i);
-    for (const i of [...state.rendered.keys()]){
-      if (i < min || i > max) unrender(i);
-    }
-  }
-
-  // ---------- PLACEHOLDER → FILL ----------
-  async function createPlaceholderNext(){
-    const idx = state.timeline.length;
-    const rec = { idx, sub:'', postId:null, kind:'pending', src:'', poster:'', bg:'', title:'Loading next…', playedOnce:false };
-    state.timeline.push(rec);
-    ensureRendered(idx);
-    return idx;
-  }
-
-  async function fillPlaceholder(idx){
-    if (state.fillingIdx.has(idx)) return;
-    state.fillingIdx.add(idx);
-    try{
-      const pick = await chooseSubWithOneUnseen();
-      if (!pick) return;
-      const filled = recordFromPost(pick.sub, pick.post);
-      if (!filled) return;
-
-      filled.idx = idx;
-      state.timeline[idx] = filled;
-      markSubUsed(filled.sub);
-      if (idx === 0) document.title = `r/${filled.sub} — hot videos`;
-
-      upgradeSlideInPlace(idx, filled);
-      updateCandidate();
-      if (!state.scrolling) commitActive();
-    } finally {
-      state.fillingIdx.delete(idx);
-    }
-  }
-
-  // ---------- INTERSECTION / CANDIDATE ----------
-  const slideObserver = new IntersectionObserver((entries)=>{
-    for (const e of entries) state.ratios.set(e.target, e.intersectionRatio);
-    updateCandidate();
-  }, { root: app, threshold: [0, CFG.ACTIVATE_THRESHOLD, 1] });
-
-  function observeSlide(slide){ slideObserver.observe(slide); }
-
-  function bestCandidate(){
-    let best=null, rBest=CFG.ACTIVATE_THRESHOLD;
-    for (const [el, r] of state.ratios.entries()){
-      if (!app.contains(el)) { state.ratios.delete(el); continue; }
-      if (r > rBest){ rBest=r; best=el; }
-    }
-    return best;
-  }
-
-  function updateCandidate(){
-    const cand = bestCandidate();
-    if (cand) state.candidateSlide = cand;
-
-    if (state.candidateSlide){
-      const idx = +state.candidateSlide.dataset.idx;
-      const min = Math.max(0, idx - CFG.HISTORY_BACK);
-      const max = Math.min(state.timeline.length - 1, idx + CFG.AHEAD_MAX);
-      for (let i=min; i<=max; i++) ensureRendered(i);
-
-      const needIdx = idx + 1;
-      if (needIdx >= state.timeline.length){
-        createPlaceholderNext().then(fillPlaceholder);
-      }
-    }
-  }
-
-  // ---------- SCROLL SETTLE ----------
-  function onAnyScroll(){
-    state.scrolling = true;
-    if (state.settleTimer) clearTimeout(state.settleTimer);
-    state.settleTimer = setTimeout(()=>{
-      state.scrolling = false;
-      state.settledAt = now();
-      commitActive();
-    }, CFG.SETTLE_DELAY_MS);
-  }
-  app.addEventListener('scroll', onAnyScroll, { passive:true });
-  window.addEventListener('resize', onAnyScroll, { passive:true });
-  window.addEventListener('wheel', onAnyScroll, { passive:true });
-  window.addEventListener('keydown', (e)=>{
-    const keys = ['PageDown','PageUp','Home','End','ArrowDown','ArrowUp','ArrowLeft','ArrowRight','Space'];
-    if (keys.includes(e.code)) onAnyScroll();
-  });
-
-  // ---------- PLAYBACK ----------
-  function attachSrc(v, mode){
-    if (!v) return;
-    if (!v.src && v.dataset.src){ v.src = v.dataset.src; v.preload = mode; v.load(); }
-    else { v.preload = mode; }
-  }
-  function detachSrc(v){
-    if (!v) return;
-    v.pause();
-    if (v.dataset.role !== 'prev'){
-      if (v.src){
-        if (!v.dataset.src) v.dataset.src = v.src;
-        v.removeAttribute('src'); v.load();
-      }
-    }
-    v.preload = 'none';
-    v.classList.remove('is-playing');
-  }
-  function startIframe(ifr){ if (ifr){ const want = ifr.dataset.autoplaySrc || ''; if (ifr.src !== want) ifr.src = want; } }
-  function stopIframe(ifr){ if (ifr && ifr.src !== 'about:blank') ifr.src = 'about:blank'; }
-  function ensurePlay(v){
-    if (!v) return;
-    const play = ()=> v.play().catch(()=>{});
-    if (v.readyState >= 2) play(); else { v.addEventListener('canplay', play, { once:true }); }
-  }
-
-  function primeRoles(activeIdx){
-    for (const [idx, el] of state.rendered){
-      const kind = el.dataset.kind;
-      const role = idx === activeIdx ? 'active' : (idx === activeIdx - 1 ? 'prev' : (idx === activeIdx + 1 ? 'next' : 'other'));
-      if (kind === 'video'){
-        const v = el.querySelector('video'); if (!v) continue;
-        v.dataset.role = role;
-
-        if (role === 'active'){
-          const rec = state.timeline[+el.dataset.idx];
-          const revisit = rec?.playedOnce === true;
-
-          attachSrc(v, 'auto');
-
-          if (revisit){
-            // Already decoded at least once → reveal and (re)play immediately
-            v.classList.add('is-playing');
-            const th = el.querySelector('.thumb');
-            if (th && th.style.display !== 'none'){
-              th.style.opacity='0';
-              th.addEventListener('transitionend', ()=> th.style.display='none', {once:true});
-            }
-            getBadgeCtrl(el).hideStable();
-            ensurePlay(v);
-          } else {
-            if (!state.scrolling){
-              if (v.readyState < 2) getBadgeCtrl(el).showDebounced(); else getBadgeCtrl(el).hideStable();
-              v.muted = true; v.setAttribute('muted','');
-              v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline','');
-              v.loop = true; ensurePlay(v);
-            } else {
-              getBadgeCtrl(el).showDebounced();
-              v.pause();
-            }
-          }
-        } else if (role === 'next'){
-          attachSrc(v, CFG.NEXT_PRELOAD);
-          getBadgeCtrl(el).hideStable();
-          v.pause();
-        } else if (role === 'prev'){
-          // keep lightweight attachment for instant back-swipe replay
-          attachSrc(v, 'metadata');
-          getBadgeCtrl(el).hideStable();
-          v.pause();
-        } else {
-          detachSrc(v); getBadgeCtrl(el).hideStable();
-        }
-      } else if (kind === 'iframe'){
-        if (role === 'active'){
-          if (!state.scrolling) startIframe(el.querySelector('iframe'));
-        } else if (role === 'next'){
-          startIframe(el.querySelector('iframe'));
-        } else {
-          stopIframe(el.querySelector('iframe'));
-        }
-        getBadgeCtrl(el).hideStable();
-      } else if (kind === 'pending'){
-        if (role === 'next' || role === 'active') fillPlaceholder(+el.dataset.idx);
-      }
-    }
-  }
-
-  function commitActive(){
-    const cand = state.candidateSlide || bestCandidate();
-    if (!cand) return;
-
-    const activeIdx = +cand.dataset.idx;
-
-    if (state.activeSlide !== cand){
-      state.activeSlide = cand;
-      enforceWindow(activeIdx);
-    }
-    primeRoles(activeIdx);
-
-    const needIdx = activeIdx + 1;
-    if (needIdx >= state.timeline.length){
-      createPlaceholderNext().then(fillPlaceholder);
-    }
-  }
-
-  // ---------- STARTUP ----------
-  async function init(){
-    try{
-      const j = await fetch('./subreddits.json').then(r=>r.json());
-      const list = Array.isArray(j) ? j
-                : Array.isArray(j.Subreddits) ? j.Subreddits
-                : Array.isArray(j.subreddits) ? j.subreddits
-                : [];
-      state.subsList = list.filter(Boolean).map(s=>String(s).replace(/^r\//i,'').trim()).filter(Boolean);
-      if (!state.subsList.length) state.subsList = ['pics'];
-
-      const idx0 = await createPlaceholderNext();
-      await fillPlaceholder(idx0);
-
-      ensureRendered(0);
-      updateCandidate();
-      state.scrolling = false;
-      commitActive();
-    } catch {
-      const holder = app.querySelector('.slide');
-      if (holder) holder.innerHTML = `<div class="error">Failed to load <code>subreddits.json</code> or initial video.</div>`;
-    }
-  }
-  init();
-
-  // Pause/resume on tab visibility
-  document.addEventListener('visibilitychange', ()=>{
-    if (document.hidden && state.activeSlide){
-      if (state.activeSlide.dataset.kind === 'video') state.activeSlide.querySelector('video')?.pause();
-      else state.activeSlide.querySelector('iframe')?.setAttribute('src','about:blank');
-    } else commitActive();
-  });
+import { Geddit } from './geddit.min.js';
+
+// ===== CONFIG (tuned for speed) =====
+const CFG={
+  INCLUDE_NSFW:true,
+  MIN_REQ_GAP_MS:1200,
+  MAX_PAGES_PER_PICK:2,
+  CANDIDATE_TRIES:20,
+  RECENT_WINDOW:24,
+  NEXT_PRELOAD:'auto',
+  GLOBAL_BACKOFF_MS:5000,
+  HISTORY_BACK:80,
+  AHEAD_MAX:5,
+  NEED_AHEAD:4,
+  BADGE_DELAY_MS:90,
+  BADGE_MIN_VISIBLE_MS:120,
+  SETTLE_DELAY_MS:90,
+  ACTIVATE_THRESHOLD:.75,
+  LOAD_GUARD_MS:650,
+  PENDING_GUARD_MS:450,
+  POOL_TARGET:8,
+  REFILL_SUBS_PER_CYCLE:4
+};
+
+// ===== STATE =====
+const api=new Geddit();
+const app=document.getElementById('app');
+const S={
+  subs:[],
+  lastReqAt:0,
+  backoffUntil:0,
+  timeline:[], // array of records
+  rendered:new Map(), // idx -> element
+  active:null,
+  cand:null,
+  ratios:new Map(),
+  subState:new Map(), // sub -> {after, seen:Set, queue:[]}
+  pool:[], // ready candidates
+  bad:new Set(), // bad postIds this session
+  seenAll:new Set(), // global seen posts
+  refilling:false,
+  filling:new Set(),
+  scrolling:false,
+  settleTimer:null
+};
+
+// ===== UTILS =====
+const now=()=>Date.now();
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const pick=a=>a[(Math.random()*a.length)|0];
+const unesc=s=>(s||'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'");
+const posterOf=d=>unesc(d.preview?.images?.[0]?.source?.url)||(/^(https?:\/\/)/.test(d.thumbnail)&&!/(self|default|nsfw|image)/i.test(d.thumbnail)?d.thumbnail:'');
+const redditVideoOf=d=>d.secure_media?.reddit_video?.fallback_url||d.media?.reddit_video?.fallback_url||d.preview?.reddit_video_preview?.fallback_url||null;
+const isDirectVideo=u=>/^https?:\/\/.+\.(mp4|webm|m4v)$/i.test(u||'');
+const normGifv=u=>u&&/\.gifv$/i.test(u)?u.replace(/\.gifv$/i,'.mp4'):u;
+const oembedSrcOf=d=>{const h=d.secure_media?.oembed?.html||d.media?.oembed?.html;if(!h)return null;const ifr=new DOMParser().parseFromString(h,'text/html').querySelector('iframe');return ifr?ifr.getAttribute('src'):null};
+const addAutoParams=src=>{try{const u=new URL(src,location.href),h=u.hostname.toLowerCase(),S=(k,v)=>u.searchParams.set(k,v);S('autoplay','1');S('muted','1');S('playsinline','1');S('loop','1');if(h.includes('youtube.com')||h.includes('youtu.be')){S('controls','0');S('modestbranding','1');S('rel','0');S('enablejsapi','1');const id=u.hostname.includes('youtu.be')?u.pathname.split('/')[1]:(u.pathname.match(/\/embed\/([^/?#]+)/)?.[1]||u.searchParams.get('v')||'');if(id)S('playlist',id)}if(h.includes('vimeo.com'))S('background','1');return u+''}catch{return src}};
+const postUrlOf=d=>d?.permalink?('https://www.reddit.com'+d.permalink):(d?.url||'');
+const fmtDate=ts=>{try{return new Date(ts*1000).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})}catch{return ''}};
+const renderTitle=(el,r)=>{const t=el.querySelector('.title');if(!t)return;t.textContent=r.title||'';const m=document.createElement('div');m.className='meta';m.innerHTML=`<a href="https://www.reddit.com/r/${r.sub}/" target="_blank" rel="noopener">r/${r.sub}</a> · <a href="${r.url}" target="_blank" rel="noopener">${fmtDate(r.created)}</a>`;t.appendChild(m)};
+const _pcHosts=new Set();
+const preconnect=url=>{try{const u=new URL(url,location.href).origin;if(!_pcHosts.has(u)){_pcHosts.add(u);['preconnect','dns-prefetch'].forEach(rel=>{const l=document.createElement('link');l.rel=rel;l.href=u;document.head.appendChild(l)})}}catch{}};
+
+// ===== RATE-GATED API =====
+const rateGate=async()=>{let w=0,t=now();if(t<S.backoffUntil)w=Math.max(w,S.backoffUntil-t);const s=t-S.lastReqAt;if(s<CFG.MIN_REQ_GAP_MS)w=Math.max(w,CFG.MIN_REQ_GAP_MS-s);if(w)await sleep(w);S.lastReqAt=now()};
+const fetchHotPage=async(sub,after=null)=>{try{await rateGate();const o={include_over_18:CFG.INCLUDE_NSFW};if(after)o.after=after;const r=await api.getSubmissions('hot',sub,o);if(!r||!Array.isArray(r.posts))throw Error('bad');return{items:r.posts.map(p=>p.data||p),after:r.after||null}}catch{S.backoffUntil=now()+CFG.GLOBAL_BACKOFF_MS;return{items:[],after:null}}};
+
+// ===== SUB STATE =====
+const gSub=s=>S.subState.get(s)||S.subState.set(s,{after:null,seen:new Set(),queue:[]}).get(s);
+const markSub=s=>{}; // no-op (we allow back-to-back by design)
+
+// ===== RECORD =====
+const recFrom=(sub,d)=>{const title=d.title||'(untitled)',bg=posterOf(d),rv=redditVideoOf(d),direct=normGifv(d.url_overridden_by_dest||d.url||''),url=postUrlOf(d),created=d.created_utc||0;if(rv||isDirectVideo(direct)){const prio=rv?2:1;return{idx:S.timeline.length,sub,postId:d.name||d.id,kind:'video',src:rv||direct,poster:bg||'',bg:bg||'',title,url,created,playedOnce:false,prio}}const o=oembedSrcOf(d);return o?{idx:S.timeline.length,sub,postId:d.name||d.id,kind:'iframe',src:addAutoParams(o),poster:'',bg:bg||'',title,url,created,playedOnce:false,prio:0}:null};
+
+// ===== POOL REFILL (smart) =====
+const refillSubQueue=async(sub)=>{const st=gSub(sub);if(st.queue.length)return;const {items,after}=await fetchHotPage(sub,st.after);if(!items||!items.length)return;for(const d of items){const id=d.name||d.id;const rv=redditVideoOf(d);const direct=normGifv(d.url_overridden_by_dest||d.url||'');const emb=oembedSrcOf(d);if(!st.seen.has(id)&&!S.seenAll.has(id)&&(rv||isDirectVideo(direct)||emb))st.queue.push(d)}st.after=after||st.after};
+const ensurePoolFilled=async()=>{if(S.refilling)return;S.refilling=true;try{const need=CFG.POOL_TARGET-S.pool.length;if(need<=0)return;const subs=[...S.subs];for(let i=0;i<CFG.REFILL_SUBS_PER_CYCLE && S.pool.length<CFG.POOL_TARGET && subs.length;i++){const sub=pick(subs);subs.splice(subs.indexOf(sub),1);await refillSubQueue(sub);const st=gSub(sub);while(st.queue.length && S.pool.length<CFG.POOL_TARGET){const d=st.queue.shift();const rec=recFrom(sub,d);if(!rec)continue;if(S.bad.has(rec.postId)||st.seen.has(rec.postId)||S.seenAll.has(rec.postId))continue;rec.prio=(rec.kind==='iframe'?0:(rec.src.includes('v.redd.it')?2:1));preconnect(rec.src);S.pool.push(rec)}}S.pool.sort((a,b)=>(b.prio||0)-(a.prio||0))}finally{S.refilling=false}};
+const takeFromPool=()=>{if(!S.pool.length)return null;const rec=S.pool.shift();gSub(rec.sub).seen.add(rec.postId);S.seenAll.add(rec.postId);return rec};
+
+// ===== FAST REPLACE & FALLBACK PICK =====
+const probeVideo=(src,timeout=450)=>new Promise(resolve=>{try{const v=document.createElement('video');v.muted=true;v.preload='metadata';v.src=src;let to=setTimeout(()=>{cleanup(false)},timeout);const cleanup=ok=>{clearTimeout(to);v.removeAttribute('src');try{v.load()}catch{};resolve(!!ok)};v.onloadeddata=()=>cleanup(true);v.onerror=()=>cleanup(false)}catch{resolve(false)}});
+const fastReplace=async idx=>{await ensurePoolFilled();let tries=0,rec=null;while(tries<3){rec=takeFromPool();if(!rec){await ensurePoolFilled();rec=takeFromPool();if(!rec)break}if(rec.kind==='video'){const ok=await probeVideo(rec.src,450);if(!ok){S.bad.add(rec.postId);tries++;continue}}break}if(!rec)return;rec.idx=idx;S.timeline[idx]=rec;markSub(rec.sub);upgrade(idx);const el=S.rendered.get(idx);cancelGuard(el)};
+const choosePost=async()=>{const tried=new Set();for(let i=0;i<20;i++){const avail=S.subs.filter(s=>!tried.has(s));const sub=avail.length?pick(avail):pick(S.subs);tried.add(sub);let after=gSub(sub).after;for(let p=0;p<2;p++){const {items,after:na}=await fetchHotPage(sub,after);if(!items||!items.length)break;for(const d of items){const id=d.name||d.id;if(S.seenAll.has(id))continue;const rv=redditVideoOf(d);const direct=normGifv(d.url_overridden_by_dest||d.url||'');const emb=oembedSrcOf(d);if(rv||isDirectVideo(direct)||emb){gSub(sub).seen.add(id);S.seenAll.add(id);gSub(sub).after=na||gSub(sub).after;return {sub,post:d}}}after=na;if(!after)break}}return null};
+
+// ===== BADGE =====
+const badgeCtrl=el=>{if(el._badge)return el._badge;const b=el.querySelector('.loading-badge');const c={v:false,t:null,last:0,show(){if(!b||c.v||c.t)return;c.t=setTimeout(()=>{c.t=null;c.v=true;c.last=now();b.style.display='flex'},CFG.BADGE_DELAY_MS)},hide(){if(!b)return;const end=()=>{c.v=false;c.last=now();b.style.display='none'};if(c.v){const e=now()-c.last;if(e>=CFG.BADGE_MIN_VISIBLE_MS)end();else setTimeout(end,CFG.BADGE_MIN_VISIBLE_MS-e)}else if(c.t){clearTimeout(c.t);c.t=null}}};return(el._badge=c)};
+
+// ===== GUARDS =====
+const startGuard=(el,fn,ms=CFG.LOAD_GUARD_MS)=>{cancelGuard(el);el._guardT=setTimeout(fn,ms)};
+const cancelGuard=el=>{if(el&&el._guardT){clearTimeout(el._guardT);el._guardT=null}};
+const quickSwap=(el,idx,left=3,ms=CFG.PENDING_GUARD_MS)=>{startGuard(el,async()=>{await fastReplace(idx);if(left>0)quickSwap(el,idx,left-1,Math.max(300,ms-100))},ms)};
+
+// ===== REVEAL =====
+const bindReveal=(slide,video)=>{if(video._bound)return;video._bound=true;const th=slide.querySelector('.thumb');let revealed=false;const reveal=()=>{if(revealed)return;revealed=true;video.classList.add('is-playing');if(th){th.style.opacity='0';th.addEventListener('transitionend',()=>th.style.display='none',{once:true})}badgeCtrl(slide).hide();cancelGuard(slide);const r=S.timeline[+slide.dataset.idx];if(r)r.playedOnce=true};const badge=()=>{if(!revealed&&!video.classList.contains('is-playing'))badgeCtrl(slide).show()};video.addEventListener('playing',()=>{'requestVideoFrameCallback'in video?video.requestVideoFrameCallback?.(()=>reveal()):video.addEventListener('timeupdate',function onTU(){if(video.currentTime>0){video.removeEventListener('timeupdate',onTU);reveal()}},{once:true});setTimeout(()=>{if(!revealed)reveal()},120)});video.addEventListener('loadeddata',badge);video.addEventListener('waiting',badge);video.addEventListener('ended',()=>video.play().catch(()=>{}));video.addEventListener('error',()=>{badgeCtrl(slide).show();slide.querySelector('.loading-badge span')&&(slide.querySelector('.loading-badge span').textContent='Tap to retry')});if(S.timeline[+slide.dataset.idx]?.playedOnce)reveal()};
+
+// ===== RENDER =====
+const badgeEl=(t='Loading video…')=>{const d=document.createElement('div');d.className='loading-badge';d.innerHTML=`<div class="spinner"></div><span>${t}</span>`;return d};
+const baseSlide=(idx,kind,sub,bg,title)=>{const s=document.createElement('section');s.className='slide';s.dataset.idx=idx;s.dataset.kind=kind;s.dataset.sub=sub||'';s.innerHTML=`<div class="bg"><img ${bg?`src="${bg}"`:''}></div><div class="media"></div><div class="title"></div>`;s.querySelector('.title').textContent=title||'';obs(s);return s};
+const addVideo=(s,m,r)=>{const v=document.createElement('video');Object.assign(v,{loop:true,muted:true,autoplay:false,controls:false,preload:'none'});v.setAttribute('muted','');v.setAttribute('playsinline','');v.setAttribute('webkit-playsinline','');v.disablePictureInPicture=v.disableRemotePlayback=v.playsInline=true;v.dataset.src=r.src;v.dataset.idx=r.idx; if(r.poster)v.poster=r.poster;m.appendChild(v);bindReveal(s,v);return v};
+const renderSlide=r=>{const s=baseSlide(r.idx,r.kind,r.sub,r.bg,r.title);const m=s.querySelector('.media');if(r.kind!=='pending')renderTitle(s,r);if(r.kind==='pending'){m.appendChild(badgeEl('Fetching next video…'));quickSwap(s,r.idx,3,CFG.PENDING_GUARD_MS);return s}if(r.poster){const i=document.createElement('img');i.className='thumb';i.loading='eager';i.decoding='async';i.src=r.poster;m.appendChild(i)}m.appendChild(badgeEl());if(r.kind==='video')addVideo(s,m,r);else{const f=document.createElement('iframe');f.src='about:blank';f.dataset.autoplaySrc=r.src;f.allow='autoplay; fullscreen; picture-in-picture; encrypted-media';f.referrerPolicy='no-referrer-when-downgrade';f.frameBorder='0';m.appendChild(f)}return s};
+const insertOrdered=el=>{const idx=+el.dataset.idx,keys=[...S.rendered.keys()].sort((a,b)=>a-b),n=keys.find(i=>i>idx);n!=null?app.insertBefore(el,S.rendered.get(n)):app.appendChild(el);S.rendered.set(idx,el);const ph=app.querySelector('.slide .empty');if(ph)app.querySelector('.slide').remove()};
+const ensureRendered=i=>{if(S.rendered.has(i))return;const r=S.timeline[i];if(!r)return;insertOrdered(renderSlide(r))};
+const upgrade=i=>{const r=S.timeline[i],el=S.rendered.get(i);if(!el){ensureRendered(i);return}cancelGuard(el);el.dataset.kind=r.kind;el.dataset.sub=r.sub||'';const bg=el.querySelector('.bg img');if(bg)bg.src=r.bg||bg.src;renderTitle(el,r);const m=el.querySelector('.media');m.innerHTML='';if(r.poster){const im=document.createElement('img');im.className='thumb';im.loading='eager';im.decoding='async';im.src=r.poster;m.appendChild(im)}m.appendChild(badgeEl());if(r.kind==='video')addVideo(el,m,r);else{const f=document.createElement('iframe');f.src='about:blank';f.dataset.autoplaySrc=r.src;f.allow='autoplay; fullscreen; picture-in-picture; encrypted-media';f.referrerPolicy='no-referrer-when-downgrade';f.frameBorder='0';m.appendChild(f)}if(el===S.cand&&!S.scrolling)commit()};
+const unrender=i=>{const el=S.rendered.get(i);if(!el)return;cancelGuard(el);io.unobserve(el);if(el.dataset.kind==='video')detach(el.querySelector('video'));if(el.dataset.kind==='iframe')stopIfr(el.querySelector('iframe'));el.remove();S.rendered.delete(i)};
+
+// ===== PLACEHOLDERS =====
+const addPlaceholder=()=>{const idx=S.timeline.length;const rec={idx,sub:'',postId:null,kind:'pending',src:'',poster:'',bg:'',title:'Loading next…',playedOnce:false};S.timeline.push(rec);ensureRendered(idx); // try instant from pool
+const r=takeFromPool();if(r){r.idx=idx;S.timeline[idx]=r;markSub(r.sub);upgrade(idx)}return idx};
+const fill=async idx=>{if(S.filling.has(idx))return;S.filling.add(idx);try{await ensurePoolFilled();let rec=takeFromPool();if(!rec){const pick=await choosePost();if(pick){const r2=recFrom(pick.sub,pick.post);if(r2){rec=r2;gSub(rec.sub).seen.add(rec.postId);S.seenAll.add(rec.postId)}}}if(!rec)return;rec.idx=idx;S.timeline[idx]=rec;markSub(rec.sub);upgrade(idx)}finally{S.filling.delete(idx)}};
+
+// ===== OBSERVER / CANDIDATE =====
+const io=new IntersectionObserver(es=>{for(const e of es)S.ratios.set(e.target,e.intersectionRatio);updateCand()},{root:app,threshold:[0,CFG.ACTIVATE_THRESHOLD,1]});
+const obs=s=>io.observe(s);
+const best=()=>{let b=null,rb=CFG.ACTIVATE_THRESHOLD;for(const [el,r] of S.ratios){if(!app.contains(el)){S.ratios.delete(el);continue}if(r>rb){rb=r;b=el}}return b};
+const ensureAhead=i=>{while(S.timeline.length<i+CFG.NEED_AHEAD){const _i=addPlaceholder();fill(_i)}};
+const updateCand=()=>{const c=best();if(c)S.cand=c; if(S.cand){const i=+S.cand.dataset.idx,min=Math.max(0,i-CFG.HISTORY_BACK),max=Math.min(S.timeline.length-1,i+CFG.AHEAD_MAX);for(let k=min;k<=max;k++)ensureRendered(k);ensurePoolFilled();ensureAhead(i);const need=i+1;if(need>=S.timeline.length){const _i=addPlaceholder();fill(_i)}}};
+
+// ===== SCROLL SETTLE =====
+const onScroll=()=>{S.scrolling=true;clearTimeout(S.settleTimer);S.settleTimer=setTimeout(()=>{S.scrolling=false;commit()},CFG.SETTLE_DELAY_MS)};
+app.addEventListener('scroll',onScroll,{passive:true});
+['resize','wheel'].forEach(e=>window.addEventListener(e,onScroll,{passive:true}));
+window.addEventListener('keydown',e=>{if(['PageDown','PageUp','Home','End','ArrowDown','ArrowUp','ArrowLeft','ArrowRight','Space'].includes(e.code))onScroll()});
+
+// ===== PLAYBACK =====
+const attach=(v,m)=>{if(!v)return; if(!v.src&&v.dataset.src){v.src=v.dataset.src;v.preload=m;v.load()}else v.preload=m};
+const detach=v=>{if(!v)return;v.pause();if(v.dataset.role!=='prev'){if(v.src){if(!v.dataset.src)v.dataset.src=v.src;v.removeAttribute('src');v.load()}}v.preload='none';v.classList.remove('is-playing')};
+const startIfr=f=>{if(f){const want=f.dataset.autoplaySrc||'';if(f.src!==want)f.src=want}};const stopIfr=f=>{if(f&&f.src!=='about:blank')f.src='about:blank'};
+const ensurePlay=v=>{if(!v)return;const go=()=>v.play().catch(()=>{});v.readyState>=2?go():v.addEventListener('canplay',go,{once:true})};
+const prime=idx=>{for(const [i,el] of S.rendered){const k=el.dataset.kind,r=i===idx?'active':(i===idx-1?'prev':(i===idx+1?'next':'other'));if(k==='video'){const v=el.querySelector('video');if(!v)continue;v.dataset.role=r;if(r==='active'){attach(v,'auto');const rec=S.timeline[+el.dataset.idx],revisit=!!rec?.playedOnce;if(revisit){v.classList.add('is-playing');const th=el.querySelector('.thumb');if(th&&th.style.display!=='none'){th.style.opacity='0';th.addEventListener('transitionend',()=>th.style.display='none',{once:true})}badgeCtrl(el).hide();ensurePlay(v)}else{if(!S.scrolling){v.readyState<2?badgeCtrl(el).show():badgeCtrl(el).hide();v.muted=true;v.setAttribute('muted','');v.setAttribute('playsinline','');v.setAttribute('webkit-playsinline','');v.loop=true;ensurePlay(v);startGuard(el,()=>fastReplace(+el.dataset.idx))}else{badgeCtrl(el).show();v.pause()}}}else if(r==='next'){attach(v,CFG.NEXT_PRELOAD);badgeCtrl(el).hide();cancelGuard(el);v.pause()}else if(r==='prev'){attach(v,'metadata');badgeCtrl(el).hide();cancelGuard(el);v.pause()}else{detach(v);badgeCtrl(el).hide();cancelGuard(el)}} else if(k==='iframe'){if(r==='active'){const f=el.querySelector('iframe');if(!S.scrolling)startIfr(f);if(f&&!f._lb){f._lb=true;f.addEventListener('load',()=>cancelGuard(el))}startGuard(el,()=>fastReplace(+el.dataset.idx))}else if(r==='next'){startIfr(el.querySelector('iframe'));cancelGuard(el)}else{stopIfr(el.querySelector('iframe'));cancelGuard(el)}badgeCtrl(el).hide()}else if(k==='pending'){if(r==='next'||r==='active')fill(+el.dataset.idx)}}};
+
+// ===== ACTIVATION =====
+const commit=()=>{const c=S.cand||best();if(!c)return;const idx=+c.dataset.idx;if(S.active!==c){S.active=c;const min=Math.max(0,idx-CFG.HISTORY_BACK),max=Math.min(S.timeline.length-1,idx+CFG.AHEAD_MAX);for(let i=min;i<=max;i++)ensureRendered(i)}prime(idx);ensurePoolFilled();ensureAhead(idx);const need=idx+1;if(need>=S.timeline.length){const _i=addPlaceholder();fill(_i)}};
+
+// ===== STARTUP & SUBS LOAD + GATE =====
+const showErr=msg=>{const h=app.querySelector('.slide');if(h)h.innerHTML='<div class="error">'+msg+'</div>'};
+const loadSubs=async()=>{const r=await fetch('./subreddits.json');if(!r.ok)throw 0;const j=await r.json();const a=Array.isArray(j?.Subreddits)?j.Subreddits:[];const subs=a.map(s=>String(s).replace(/^r\//i,'').trim()).filter(Boolean);if(!subs.length)throw 0;return subs};
+const init=async()=>{try{S.subs=await loadSubs()}catch{showErr('Failed to load subreddits.json (expected {"Subreddits": [ ... ]})');return}const i0=addPlaceholder();await fill(i0);ensureRendered(0);updateCand();S.scrolling=false;commit()};
+const consent=()=>{localStorage.setItem('adult_ok','1');document.getElementById('gate')?.remove();init()};
+const showGate=()=>{const g=document.getElementById('gate');g.style.display='grid';g.querySelector('.enter').onclick=consent;g.querySelector('.leave').onclick=()=>location.href='https://www.reddit.com'};
+localStorage.getItem('adult_ok')==='1'?init():showGate();
+
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&S.active){S.active.dataset.kind==='video'?S.active.querySelector('video')?.pause():S.active.querySelector('iframe')?.setAttribute('src','about:blank')}else commit()});
 </script>
 </body>
 </html>
