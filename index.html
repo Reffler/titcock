@@ -1,492 +1,534 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<title>Hot videos — capped & quick</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E">
-<style>
-  :root{--overlay:linear-gradient(180deg,rgba(0,0,0,.7),rgba(0,0,0,.35) 60%,transparent);--title-pad:clamp(10px,2.2vh,16px);--title-size:clamp(14px,2.1vh,18px)}
-  *{box-sizing:border-box}html,body{height:100%}body{margin:0;background:#000;color:#fff;font-family:system-ui,Segoe UI,Inter,Roboto,Arial}
-  #app{position:fixed;inset:0;height:100svh;overflow-y:scroll;scroll-snap-type:y mandatory;-webkit-overflow-scrolling:touch;background:#000;scrollbar-width:none;-ms-overflow-style:none}
-  #app::-webkit-scrollbar{width:0;height:0}
-  .slide{position:relative;height:100svh;width:100%;scroll-snap-align:start;display:grid;place-items:center;background:#000;overflow:hidden;touch-action:manipulation;contain:layout paint}
-  .bg{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden}
-  .bg>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:blur(24px) brightness(.45);transform:scale(1.06);will-change:transform,filter}
-  .media{position:relative;z-index:1;width:100%;height:100%;display:grid;place-items:center}
-  .media>video,.media>iframe{width:100%;height:100%;object-fit:contain;max-width:100vw;max-height:100svh;display:block;background:transparent}
-  .thumb{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;background:transparent;z-index:3;transition:opacity .14s linear}
-  .media>video{opacity:0;transition:opacity .18s ease;z-index:2;will-change:opacity;background-color:transparent!important}
-  .media>video.is-playing{opacity:1}
-  .title{position:absolute;left:0;right:0;top:0;z-index:4;padding:calc(env(safe-area-inset-top) + var(--title-pad)) var(--title-pad) var(--title-pad);background:var(--overlay);font-weight:700;font-size:var(--title-size);line-height:1.25;text-shadow:0 1px 2px rgba(0,0,0,.7)}
-  .loading-badge{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:none;align-items:center;gap:10px;padding:10px 12px;border-radius:999px;background-color:rgba(0,0,0,.45);backdrop-filter:blur(4px);font-size:13px;color:#e6e6e6;will-change:opacity;z-index:4}
-  .loading-badge .spinner{width:18px;height:18px;border:2px solid #666;border-top-color:#fff;border-radius:50%;animation:spin .9s linear infinite}
-  @keyframes spin{to{transform:rotate(360deg)}}
-  .empty,.error{color:#bbb;text-align:center;padding:24px}.big-spinner{width:28px;height:28px;border:3px solid #333;border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto}
-  .title .meta{margin-top:6px;opacity:.9;font-weight:600;font-size:12px}.title a{color:#fff;text-decoration:none}.title a:hover{text-decoration:underline}
-  .gate{position:fixed;inset:0;display:none;place-items:center;background:rgba(0,0,0,.9);color:#eee;z-index:9999;padding:24px}
-  .gate .card{max-width:720px;background:rgba(20,20,20,.8);backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:20px;text-align:left;box-shadow:0 10px 30px rgba(0,0,0,.5)}
-  .gate h2{margin:0 0 8px 0}.gate p{margin:0 0 14px 0;line-height:1.4}.gate .actions{display:flex;gap:10px;justify-content:flex-end}
-  .gate button{cursor:pointer;border:0;border-radius:999px;padding:10px 14px;font-weight:700}.gate .enter{background:#fff;color:#000}.gate .leave{background:#333;color:#eee}
-  #hamb,.drawer,.drawer-backdrop,.subs-search{display:none!important}
-</style>
+  <meta charset="utf-8" />
+  <title>TikTok-style RedGIFs feed</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { color-scheme: dark light; }
+    * { box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      margin: 0;
+      background: #0b0c10;
+      color: #e8f0fe;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, "Helvetica Neue", Arial;
+      overflow: hidden; /* the scroller handles scroll */
+    }
+
+    /* Header shows current post title */
+    header {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      min-height: 52px;
+      display: flex;
+      align-items: center;
+      padding: 10px 14px;
+      background: linear-gradient(180deg, rgba(11,12,16,.9) 0%, rgba(11,12,16,.4) 60%, rgba(11,12,16,0) 100%);
+      z-index: 5;
+      pointer-events: none; /* let scroll pass through */
+    }
+    header h1 {
+      margin: 0;
+      font-size: clamp(12px, 2.5vw, 18px);
+      font-weight: 600;
+      letter-spacing: .2px;
+      color: #c7d2fe;
+      max-width: 92%;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Global controls */
+    .global-controls {
+      position: fixed;
+      right: 12px;
+      bottom: 16px;
+      display: flex;
+      gap: 8px;
+      z-index: 10;
+      pointer-events: auto;
+    }
+    .btn {
+      appearance: none;
+      border: 1px solid rgba(99,102,241,.5);
+      background: rgba(31,41,55,.6);
+      color: #e8f0fe;
+      padding: 8px 12px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-size: 12px;
+      backdrop-filter: blur(6px);
+    }
+    .btn:hover { background: rgba(31,41,55,.8); }
+
+    /* Vertical snap scroller */
+    .scroller {
+      position: fixed;
+      inset: 0;
+      overflow-y: auto;
+      scroll-snap-type: y mandatory;
+      scroll-behavior: smooth;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior-y: contain;
+    }
+
+    .card {
+      position: relative;
+      height: 100vh;
+      width: 100vw;
+      scroll-snap-align: start;
+      display: grid;
+      place-items: center;
+      background: #000;
+      border-bottom: 1px solid #12151f;
+      user-select: none;
+    }
+
+    /* Full (uncropped) video always visible */
+    .inner {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #000;
+      overflow: hidden;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      max-width: 100vw;
+      max-height: 100vh;
+      object-fit: contain;   /* ensures no cropping at any aspect ratio */
+      background: #000;      /* letter/pillarbox bars */
+      display: block;
+    }
+
+    /* Loading / error states */
+    .spinner, .err {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      pointer-events: none;
+    }
+    .spinner:before {
+      content: "";
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      border: 3px solid rgba(255,255,255,.15);
+      border-top-color: rgba(255,255,255,.85);
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .err {
+      padding: 12px;
+      color: #ffd7d7;
+      background: linear-gradient(180deg, rgba(42,13,13,.7), rgba(42,13,13,.2));
+      border-top: 1px solid #5b1b1b;
+      border-bottom: 1px solid #5b1b1b;
+      font-size: 13px;
+      text-align: center;
+      display: none;
+    }
+
+    /* End sentinel space */
+    .end {
+      height: 40vh;
+      display: grid;
+      place-items: center;
+      color: #9ca3af;
+      font-size: 13px;
+    }
+  </style>
 </head>
 <body>
-<div id="gate" class="gate"><div class="card"><h2>Disclaimer</h2><p>This website curates and displays adult-oriented material sourced exclusively via publicly available Reddit RSS feeds. All videos, images, and posts remain the property of their original creators and are hosted on Reddit’s servers. We do not upload, host, or store any media files. By continuing to use this site, you confirm you are of legal age to view adult material in your jurisdiction.</p><div class="actions"><button class="enter">I am of legal age</button><button class="leave">Leave</button></div></div></div>
+  <header><h1 id="headerTitle">Loading…</h1></header>
 
-<main id="app">
-  <section class="slide"><div class="empty"><div class="big-spinner"></div><div style="margin-top:10px">Loading first video…</div></div></section>
-</main>
+  <main id="scroller" class="scroller" aria-label="TikTok-style video feed">
+    <!-- Cards get appended here -->
+    <div id="sentinel" class="end">Loading…</div>
+  </main>
 
-<script type="module">
-import { Geddit } from './geddit.min.js';
-(async()=>{
-// ================= CONFIG (hard cap + faster feel) =================
-const CFG={
-  INCLUDE_NSFW:true,
+  <div class="global-controls">
+    <button id="muteBtn" class="btn" type="button">Unmute</button>
+  </div>
 
-  // Hard global cap: NEVER exceed this many JSON calls in any rolling minute.
-  JSON_PER_MIN_CAP: 60,
+  <script>
+    (function () {
+      "use strict";
 
-  // Faster but safe pacing (minute cap still enforced)
-  MIN_REQ_GAP_MS: 900,           // spacing between JSON calls
-  GLOBAL_BACKOFF_MS: 20000,
+      /* ===========================
+         Config
+      ============================ */
+      // Chrome CORS-on-redirect fix: encode '+' in the multi to avoid redirect.
+      const MULTI = "BiggerThanYouThought+TikTokNSFW";
+      const FEED_URL = "https://www.reddit.com/r/" + encodeURIComponent(MULTI) + "/.json?raw_json=1";
 
-  // Render window
-  RENDER_BACK: 1,
-  RENDER_AHEAD: 1,
+      const PROXY = "https://api.codetabs.com/v1/proxy?quest=";
+      const SNAP_PLAY_THRESHOLD = 0.6;  // % of card visible to switch playback
+      const RATE_LIMIT_PER_SEC = 5;     // Codetabs documented limit
+      const CACHE_CAP = 8;              // how many videos to keep attached (LRU)
 
-  // Prefetch: promote next placeholder from pool (no JSON/media)
-  PREFETCH_NEXT: true,
+      /* ===========================
+         Helpers
+      ============================ */
+      const $ = (sel, el = document) => el.querySelector(sel);
+      const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
+      const encode = encodeURIComponent;
 
-  // Pooling
-  POOL_TARGET: 5,                // small warm pool
-  REFILL_MIN_GAP_MS: 3000,       // quicker background refills
+      // Token bucket limiter to *initiate* media loads at <=5/s.
+      const limiter = (() => {
+        let tokens = RATE_LIMIT_PER_SEC;
+        const queue = [];
+        setInterval(() => {
+          tokens = Math.min(tokens + RATE_LIMIT_PER_SEC, RATE_LIMIT_PER_SEC);
+          while (tokens > 0 && queue.length) {
+            tokens--; queue.shift()();
+          }
+        }, 1000);
+        return (fn) => {
+          if (tokens > 0) { tokens--; fn(); }
+          else { queue.push(fn); }
+        };
+      })();
 
-  // IO + settle
-  ACTIVATE_THRESHOLD: .7,
-  SETTLE_DELAY_MS: 140,
-
-  // Media
-  NEXT_PRELOAD: 'metadata',
-
-  // Probes
-  PROBE_RPM: 6,
-
-  // Preconnect budget
-  MAX_PRECONNECTS_PER_MIN: 1
-};
-
-// ================= STATE =================
-const api=new Geddit();
-const app=document.getElementById('app');
-const S={
-  subs:[],
-  lastReqAt:0,
-  backoffUntil:0,
-  timeline:[],
-  rendered:new Map(),
-  active:null,
-  cand:null,
-  ratios:new Map(),
-  subState:new Map(),    // sub -> {after, seen:Set, queue:[]}
-  pool:[],
-  bad:new Set(),
-  seenAll:new Set(),
-  refilling:false,
-  lastRefillAt:0,
-  filling:new Set(),
-  scrolling:false,
-  settleTimer:null
-};
-
-// ================= NET GATES =================
-const now=()=>Date.now();
-const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-
-// Minute-bucket hard cap
-const minuteCapGate=(cap=>{
-  const tms=[];
-  return async()=>{
-    for(;;){
-      const t=now();
-      while(tms.length && t - tms[0] >= 60000) tms.shift();
-      if(tms.length < cap){ tms.push(t); return; }
-      await sleep(60000 - (t - tms[0]));
-    }
-  };
-})(Math.max(1, CFG.JSON_PER_MIN_CAP));
-
-// Per-request spacing + error backoff
-const rateGate=async()=>{
-  let wait=0, t=now();
-  if(t<S.backoffUntil) wait=Math.max(wait, S.backoffUntil-t);
-  const since=t-S.lastReqAt;
-  if(since<CFG.MIN_REQ_GAP_MS) wait=Math.max(wait, CFG.MIN_REQ_GAP_MS-since);
-  if(wait) await sleep(wait);
-  S.lastReqAt=now();
-};
-
-// Probe RPM gate
-const makeSequentialGate=perMin=>{
-  const iv=60000/Math.max(1,perMin);let last=0;
-  return async(mult=1)=>{const t=now();const w=Math.max(0,iv*mult-(t-last));if(w)await sleep(w);last=now()};
-};
-const gatePROBE=makeSequentialGate(CFG.PROBE_RPM);
-
-// ================= HELPERS =================
-const pick=a=>a[(Math.random()*a.length)|0];
-const unesc=s=>(s||'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'");
-const posterOf=d=>unesc(d.preview?.images?.[0]?.source?.url)||(/^(https?:\/\/)/.test(d.thumbnail)&&!/(self|default|nsfw|image)/i.test(d.thumbnail)?d.thumbnail:'');
-const redditVideoOf=d=>d.secure_media?.reddit_video?.fallback_url||d.media?.reddit_video?.fallback_url||d.preview?.reddit_video_preview?.fallback_url||null;
-const isDirectVideo=u=>/^https?:\/\/.+\.(mp4|webm|m4v)$/i.test(u||'');
-const normGifv=u=>u&&/\.gifv$/i.test(u)?u.replace(/\.gifv$/i,'.mp4'):u;
-const oembedSrcOf=d=>{const h=d.secure_media?.oembed?.html||d.media?.oembed?.html;if(!h)return null;const ifr=new DOMParser().parseFromString(h,'text/html').querySelector('iframe');return ifr?ifr.getAttribute('src'):null};
-const addAutoParams=src=>{try{const u=new URL(src,location.href),h=u.hostname.toLowerCase(),S=(k,v)=>u.searchParams.set(k,v);S('autoplay','1');S('muted','1');S('playsinline','1');S('loop','1');if(h.includes('youtube.com')||h.includes('youtu.be')){S('controls','0');S('modestbranding','1');S('rel','0');S('enablejsapi','1');const id=u.hostname.includes('youtu.be')?u.pathname.split('/')[1]:(u.pathname.match(/\/embed\/([^/?#]+)/)?.[1]||u.searchParams.get('v')||'');if(id)S('playlist',id)}if(h.includes('vimeo.com'))S('background','1');return u+''}catch(e){return src}};
-const postUrlOf=d=>d?.permalink?('https://www.reddit.com'+d.permalink):(d?.url||'');
-const fmtDate=ts=>{try{return new Date(ts*1000).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})}catch(e){return ''}};
-const renderTitle=(el,r)=>{const t=el.querySelector('.title');if(!t)return;t.textContent=r.title||'';const m=document.createElement('div');m.className='meta';m.innerHTML=`<a href="https://www.reddit.com/r/${r.sub}/" target="_blank" rel="noopener">r/${r.sub}</a> · <a href="${r.url}" target="_blank" rel="noopener">${fmtDate(r.created)}</a>`;t.appendChild(m)};
-
-// Preconnect budget
-const _pcHosts=new Set();let _pcCount=0,_pcResetAt=0;
-const maybePreconnect=url=>{try{
-  const o=new URL(url,location.href).origin;const t=now();
-  if(t>_pcResetAt){_pcResetAt=t+60000;_pcCount=0}
-  if(_pcCount>=CFG.MAX_PRECONNECTS_PER_MIN||_pcHosts.has(o))return;
-  _pcHosts.add(o);_pcCount++;
-  ['preconnect','dns-prefetch'].forEach(rel=>{const l=document.createElement('link');l.rel=rel;l.href=o;document.head.appendChild(l)})
-}catch(e){}};
-
-// ================= RATE-GATED API (with minute cap & dedupe) =================
-const inflightJSON=new Map();
-const fetchHotPage=async(sub,after=null)=>{
-  const key=sub+'|'+(after||'');
-  if(inflightJSON.has(key)) return inflightJSON.get(key);
-  const p=(async()=>{
-    try{
-      await minuteCapGate();      // strict 60/min max
-      await rateGate();           // spacing + backoff
-      const o={include_over_18:CFG.INCLUDE_NSFW}; if(after) o.after=after;
-      const r=await api.getSubmissions('hot',sub,o);
-      if(!r||!Array.isArray(r.posts)) throw Error('bad');
-      return {items:r.posts.map(p=>p.data||p),after:r.after||null};
-    }catch(e){
-      S.backoffUntil=now()+CFG.GLOBAL_BACKOFF_MS;
-      return {items:[],after:null};
-    }finally{
-      inflightJSON.delete(key);
-    }
-  })();
-  inflightJSON.set(key,p);
-  return p;
-};
-
-// ================= SUB STATE =================
-const gSub=s=>S.subState.get(s)||S.subState.set(s,{after:null,seen:new Set(),queue:[]}).get(s);
-
-// ================= RECORD =================
-const recFrom=(sub,d)=>{
-  const title=d.title||'(untitled)',bg=posterOf(d),rv=redditVideoOf(d),direct=normGifv(d.url_overridden_by_dest||d.url||''),url=postUrlOf(d),created=d.created_utc||0;
-  if(rv||isDirectVideo(direct)){
-    const prio=rv?2:1;
-    return {idx:S.timeline.length,sub,postId:d.name||d.id,kind:'video',src:rv||direct,poster:bg||'',bg:bg||'',title,url,created,playedOnce:false,prio};
-  }
-  const o=oembedSrcOf(d);
-  return o?{idx:S.timeline.length,sub,postId:d.name||d.id,kind:'iframe',src:addAutoParams(o),poster:'',bg:bg||'',title,url,created,playedOnce:false,prio:0}:null;
-};
-
-// ================= POOL REFILL =================
-const refillSubQueue=async(sub)=>{
-  const st=gSub(sub);
-  if(st.queue.length) return;
-  const {items,after}=await fetchHotPage(sub,st.after);
-  if(!items||!items.length) return;
-  for(const d of items){
-    const id=d.name||d.id;
-    const rv=redditVideoOf(d), direct=normGifv(d.url_overridden_by_dest||d.url||''), emb=oembedSrcOf(d);
-    if(!st.seen.has(id)&&!S.seenAll.has(id)&&(rv||isDirectVideo(direct)||emb)) st.queue.push(d);
-  }
-  st.after=after||st.after;
-};
-
-const ensurePoolFilled=async(urgent=false)=>{
-  if(S.refilling) return;
-  const t=now();
-  if(!urgent && t-(S.lastRefillAt||0)<CFG.REFILL_MIN_GAP_MS) return;
-  S.refilling=true; S.lastRefillAt=t;
-  try{
-    const need=CFG.POOL_TARGET-S.pool.length; if(need<=0) return;
-    const subs=[...S.subs];
-    const bursts = urgent ? 2 : 1; // small urgent burst
-    for(let i=0;i<bursts && S.pool.length<CFG.POOL_TARGET && subs.length;i++){
-      const sub=pick(subs); subs.splice(subs.indexOf(sub),1);
-      await refillSubQueue(sub);
-      const st=gSub(sub);
-      while(st.queue.length && S.pool.length<CFG.POOL_TARGET){
-        const d=st.queue.shift();
-        const rec=recFrom(sub,d); if(!rec) continue;
-        if(S.bad.has(rec.postId)||st.seen.has(rec.postId)||S.seenAll.has(rec.postId)) continue;
-        rec.prio=(rec.kind==='iframe'?0:(rec.src.includes('v.redd.it')?2:1));
-        if(S.pool.length===0) maybePreconnect(rec.src);
-        S.pool.push(rec);
+      function proxied(url) {
+        return PROXY + encode(url);
       }
-    }
-    S.pool.sort((a,b)=>(b.prio||0)-(a.prio||0));
-  }finally{
-    S.refilling=false; S.lastRefillAt=now();
-  }
-};
 
-const takeFromPool=()=>{if(!S.pool.length)return null;const rec=S.pool.shift();gSub(rec.sub).seen.add(rec.postId);S.seenAll.add(rec.postId);return rec};
+      function byCaseFromThumb(thumbUrl) {
+        // Example: https://media.redgifs.com/HideousUnpleasantApatosaur-poster.jpg
+        const m = /media\.redgifs\.com\/([^\/?#]+)-poster/i.exec(thumbUrl || "");
+        return m ? m[1] : null;
+      }
 
-// ================= BADGE =================
-const badgeCtrl=el=>{
-  if(el._badge) return el._badge;
-  const b=el.querySelector('.loading-badge');
-  const c={v:false,t:null,last:0,
-    show(){if(!b||c.v||c.t)return;c.t=setTimeout(()=>{c.t=null;c.v=true;c.last=now();b.style.display='flex'},110)},
-    hide(){if(!b)return;const end=()=>{c.v=false;c.last=now();b.style.display='none'};if(c.v){const e=now()-c.last;if(e>=130)end();else setTimeout(end,130-e)}else if(c.t){clearTimeout(c.t);c.t=null}}
-  };
-  return(el._badge=c);
-};
+      function lowerToGuessPascal(slug) {
+        // Fallback if thumbnail not present; capitalize first letter.
+        return slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : null;
+      }
 
-// ================= PROBE & FAST REPLACE =================
-const probeVideo=(src,timeout=450)=>new Promise(async resolve=>{
-  await gatePROBE();
-  try{
-    const v=document.createElement('video');
-    v.muted=true;v.preload='metadata';v.src=src;
-    let to=setTimeout(()=>{cleanup(false)},timeout);
-    const cleanup=ok=>{clearTimeout(to);v.removeAttribute('src');try{v.load()}catch(e){};resolve(!!ok)};
-    v.onloadeddata=()=>cleanup(true);
-    v.onerror=()=>cleanup(false);
-  }catch(e){resolve(false)}
-});
+      function iframeSlug(html) {
+        // Extract slug from iframe HTML: <iframe src="https://www.redgifs.com/ifr/hideousunpleasantapatosaur" ...>
+        const m = /redgifs\.com\/ifr\/([a-z0-9_]+)/i.exec(html || "");
+        return m ? m[1].toLowerCase() : null;
+      }
 
-// Urgent replace for active placeholders (still respects cap)
-const fastReplace=async (idx)=>{
-  await ensurePoolFilled(true); // urgent
-  let tries=0,rec=null;
-  while(tries<2){
-    rec=takeFromPool();
-    if(!rec){
-      await ensurePoolFilled(true);
-      rec=takeFromPool();
-      if(!rec)break;
-    }
-    if(rec.kind==='video'){
-      const ok=await probeVideo(rec.src,500);
-      if(!ok){S.bad.add(rec.postId);tries++;continue}
-    }
-    break;
-  }
-  if(!rec) return;
-  rec.idx=idx; S.timeline[idx]=rec; upgrade(idx);
-};
+      function buildM4S(namePascal) {
+        return `https://media.redgifs.com/${namePascal}-mobile.m4s`;
+      }
+      function buildMP4(namePascal) {
+        return `https://media.redgifs.com/${namePascal}-mobile.mp4`;
+      }
 
-// ================= RENDER =================
-const badgeEl=(t='Loading…')=>{const d=document.createElement('div');d.className='loading-badge';d.innerHTML=`<div class="spinner"></div><span>${t}</span>`;return d};
-const baseSlide=(idx,kind,sub,bg,title)=>{
-  const s=document.createElement('section'); s.className='slide';
-  s.dataset.idx=idx; s.dataset.kind=kind; s.dataset.sub=sub||'';
-  s.innerHTML=`<div class="bg"><img ${bg?`src="${bg}"`:''}></div><div class="media"></div><div class="title"></div>`;
-  s.querySelector('.title').textContent=title||''; obs(s); return s;
-};
-const addVideo=(s,m,r)=>{
-  const v=document.createElement('video');
-  Object.assign(v,{loop:true,muted:true,autoplay:false,controls:false,preload:'none'});
-  v.setAttribute('muted','');v.setAttribute('playsinline','');v.setAttribute('webkit-playsinline','');
-  v.disablePictureInPicture=v.disableRemotePlayback=v.playsInline=true;
-  v.dataset.src=r.src; v.dataset.idx=r.idx; if(r.poster) v.poster=r.poster;
-  m.appendChild(v); bindReveal(s,v); return v;
-};
-const renderSlide=r=>{
-  const s=baseSlide(r.idx,r.kind,r.sub,r.bg,r.title);
-  const m=s.querySelector('.media');
-  if(r.kind!=='pending') renderTitle(s,r);
-  if(r.kind==='pending'){
-    m.appendChild(badgeEl('Loading…'));
-    return s;
-  }
-  if(r.poster){const i=document.createElement('img');i.className='thumb';i.loading='eager';i.decoding='async';i.src=r.poster;m.appendChild(i)}
-  m.appendChild(badgeEl());
-  if(r.kind==='video') addVideo(s,m,r);
-  else {const f=document.createElement('iframe');f.src='about:blank';f.dataset.autoplaySrc=r.src;f.allow='autoplay; fullscreen; picture-in-picture; encrypted-media';f.referrerPolicy='no-referrer-when-downgrade';f.frameBorder='0';m.appendChild(f)}
-  return s;
-};
-const insertOrdered=el=>{
-  const idx=+el.dataset.idx,keys=[...S.rendered.keys()].sort((a,b)=>a-b),n=keys.find(i=>i>idx);
-  n!=null?app.insertBefore(el,S.rendered.get(n)):app.appendChild(el);
-  S.rendered.set(idx,el);
-  const ph=app.querySelector('.slide .empty'); if(ph) app.querySelector('.slide').remove();
-};
-const ensureRendered=i=>{if(S.rendered.has(i))return;const r=S.timeline[i];if(!r)return;insertOrdered(renderSlide(r))};
-const upgrade=i=>{
-  const r=S.timeline[i],el=S.rendered.get(i);
-  if(!el){ensureRendered(i);return}
-  el.dataset.kind=r.kind; el.dataset.sub=r.sub||'';
-  const bg=el.querySelector('.bg img'); if(bg) bg.src=r.bg||bg.src;
-  renderTitle(el,r);
-  const m=el.querySelector('.media'); m.innerHTML='';
-  if(r.poster){const im=document.createElement('img');im.className='thumb';im.loading='eager';im.decoding='async';im.src=r.poster;m.appendChild(im)}
-  m.appendChild(badgeEl());
-  if(r.kind==='video') addVideo(el,m,r);
-  else {const f=document.createElement('iframe');f.src='about:blank';f.dataset.autoplaySrc=r.src;f.allow='autoplay; fullscreen; picture-in-picture; encrypted-media';f.referrerPolicy='no-referrer-when-downgrade';f.frameBorder='0';m.appendChild(f)}
-};
-const unrender=i=>{
-  const el=S.rendered.get(i); if(!el) return;
-  io.unobserve(el);
-  if(el.dataset.kind==='video'){const v=el.querySelector('video'); if(v){v.pause(); if(v.src){v.removeAttribute('src'); try{v.load()}catch(e){} }}}
-  if(el.dataset.kind==='iframe'){const f=el.querySelector('iframe'); if(f&&f.src!=='about:blank') f.src='about:blank'}
-  el.remove(); S.rendered.delete(i);
-};
+      /* ===========================
+         Global state
+      ============================ */
+      const scroller = $("#scroller");
+      const sentinel = $("#sentinel");
+      const muteBtn = $("#muteBtn");
+      const headerTitle = $("#headerTitle");
 
-// ================= PLACEHOLDERS =================
-const addPlaceholder=()=>{
-  const idx=S.timeline.length;
-  const rec={idx,sub:'',postId:null,kind:'pending',src:'',poster:'',bg:'',title:'Loading next…',playedOnce:false};
-  S.timeline.push(rec); ensureRendered(idx); return idx;
-};
-const ensurePlaceholdersAhead=i=>{
-  const need=i+1;
-  while(S.timeline.length<need+1) addPlaceholder();
-};
+      let after = null;
+      let fetching = false;
+      let activeVideo = null;
 
-// ================= IO / CANDIDATE =================
-const io=new IntersectionObserver(es=>{
-  for(const e of es) S.ratios.set(e.target,e.intersectionRatio);
-  const c=best(); if(c) S.cand=c;
-},{root:app,threshold:[0,CFG.ACTIVATE_THRESHOLD,1]});
-const obs=s=>io.observe(s);
-const best=()=>{let b=null,rb=CFG.ACTIVATE_THRESHOLD;for(const [el,r] of S.ratios){if(!app.contains(el)){S.ratios.delete(el);continue}if(r>rb){rb=r;b=el}}return b};
+      // "globalMuted" means "should the ACTIVE video be muted?"
+      let globalMuted = JSON.parse(localStorage.getItem("globalMuted") ?? "true");
 
-// ================= SCROLL SETTLE =================
-const onScroll=()=>{S.scrolling=true;clearTimeout(S.settleTimer);S.settleTimer=setTimeout(()=>{S.scrolling=false;commit()},CFG.SETTLE_DELAY_MS)};
-app.addEventListener('scroll',onScroll,{passive:true});
-['resize','wheel','touchmove'].forEach(e=>window.addEventListener(e,onScroll,{passive:true}));
-window.addEventListener('keydown',e=>{if(['PageDown','PageUp','Home','End','ArrowDown','ArrowUp','ArrowLeft','ArrowRight','Space'].includes(e.code))onScroll()});
+      // LRU list of videos with src attached (for caching)
+      const retained = [];
+      const seenSlugs = new Set(); // avoid duplicates across pages
 
-// ================= PLAYBACK =================
-const attach=(v,m)=>{if(!v)return; if(!v.src&&v.dataset.src){v.src=v.dataset.src;v.preload=m;try{v.load()}catch(e){}}else v.preload=m};
-const detach=v=>{if(!v)return;v.pause();if(v.src){v.removeAttribute('src');try{v.load()}catch(e){}}v.preload='none';v.classList.remove('is-playing')};
-const startIfr=f=>{if(f){const want=f.dataset.autoplaySrc||'';if(f.src!==want)f.src=want}};
-const stopIfr=f=>{if(f&&f.src!=='about:blank')f.src='about:blank'};
-const ensurePlay=v=>{if(!v)return;const go=()=>v.play().catch(()=>{});v.readyState>=2?go():v.addEventListener('canplay',go,{once:true})};
+      function retainVideo(v) {
+        const i = retained.indexOf(v);
+        if (i !== -1) retained.splice(i, 1);
+        retained.push(v);
+        evictIfNeeded();
+      }
 
-const bindReveal=(slide,video)=>{
-  if(video._bound) return; video._bound=true;
-  const th=slide.querySelector('.thumb'); let revealed=false;
-  const reveal=()=>{if(revealed)return;revealed=true;video.classList.add('is-playing');if(th){th.style.opacity='0';th.addEventListener('transitionend',()=>th.style.display='none',{once:true})}badgeCtrl(slide).hide();const r=S.timeline[+slide.dataset.idx];if(r)r.playedOnce=true};
-  const badge=()=>{if(!revealed&&!video.classList.contains('is-playing'))badgeCtrl(slide).show()};
-  video.addEventListener('playing',()=>{
-    ('requestVideoFrameCallback'in video)
-      ? video.requestVideoFrameCallback?.(()=>reveal())
-      : video.addEventListener('timeupdate',function onTU(){if(video.currentTime>0){video.removeEventListener('timeupdate',onTU);reveal()}},{once:true});
-    setTimeout(()=>{if(!revealed)reveal()},120);
-  });
-  video.addEventListener('loadeddata',badge);
-  video.addEventListener('waiting',badge);
-  video.addEventListener('ended',()=>video.play().catch(()=>{}));
-  video.addEventListener('error',()=>{badgeCtrl(slide).show();slide.querySelector('.loading-badge span')&&(slide.querySelector('.loading-badge span').textContent='Tap to retry')});
-};
+      function evictIfNeeded() {
+        const keep = new Set();
+        if (activeVideo) {
+          keep.add(activeVideo);
+          const { prev, next } = siblingsOf(activeVideo.closest(".card"));
+          if (prev) keep.add($("video", prev));
+          if (next) keep.add($("video", next));
+        }
+        while (retained.length > CACHE_CAP) {
+          const candidate = retained[0];
+          if (keep.has(candidate)) { retained.shift(); retained.push(candidate); continue; }
+          try { candidate.pause(); } catch {}
+          if (candidate.src) { candidate.removeAttribute("src"); candidate.load(); }
+          retained.shift();
+        }
+      }
 
-// Load ONLY the active index; optionally promote next from pool (no JSON)
-const loadForIndex=async idx=>{
-  ensurePlaceholdersAhead(idx);
+      function applyMuteState() {
+        // Only the active video may reflect the "globalMuted" setting.
+        // All others must stay muted to guarantee no audio leaks.
+        $$(".card video").forEach(v => {
+          v.muted = (v !== activeVideo) || globalMuted;
+        });
+        muteBtn.textContent = globalMuted ? "Unmute" : "Mute";
+      }
 
-  // Upgrade active quickly
-  const r=S.timeline[idx];
-  if(r && r.kind==='pending') await fastReplace(idx);
+      function setGlobalMuted(value) {
+        globalMuted = Boolean(value);
+        localStorage.setItem("globalMuted", JSON.stringify(globalMuted));
+        applyMuteState();
+        if (activeVideo) {
+          // If user unmuted, make sure only active plays (and with sound)
+          activeVideo.play().catch(()=>{});
+        }
+      }
 
-  // Promote next placeholder from pool (no network)
-  if(CFG.PREFETCH_NEXT){
-    const nx=idx+1;
-    if(nx < S.timeline.length && S.timeline[nx]?.kind==='pending' && S.pool.length>0){
-      const rec=takeFromPool();
-      if(rec){ rec.idx=nx; S.timeline[nx]=rec; ensureRendered(nx); upgrade(nx); }
-    }
-  }
-};
+      muteBtn.addEventListener("click", () => setGlobalMuted(!globalMuted));
+      applyMuteState(); // init UI
 
-// Render minimal window around active
-const renderWindow=idx=>{
-  const min=Math.max(0,idx-CFG.RENDER_BACK), max=Math.min(S.timeline.length-1,idx+CFG.RENDER_AHEAD);
-  for(let i=min;i<=max;i++) ensureRendered(i);
-  for(const k of [...S.rendered.keys()]){
-    if(k<min-2 || k>max+2) unrender(k);
-  }
-};
+      /* ===========================
+         DOM builders
+      ============================ */
+      function cardDOM({ title, namePascal, slugLower }) {
+        const card = document.createElement("section");
+        card.className = "card";
+        card.dataset.slug = slugLower || "";
+        card.dataset.name = namePascal || "";
+        card.dataset.title = title || "";
 
-// ================= ACTIVATE =================
-const commit=async()=>{
-  if(S.scrolling) return;
-  const c=S.cand||best(); if(!c) return;
-  const idx=+c.dataset.idx;
+        const inner = document.createElement("div");
+        inner.className = "inner";
 
-  renderWindow(idx);
+        const v = document.createElement("video");
+        v.setAttribute("playsinline", "");
+        // No autoplay attribute; we control when to play.
+        v.loop = true;
+        v.preload = "metadata";
+        v.crossOrigin = "anonymous";
+        v.setAttribute("x-webkit-airplay","allow");
+        v.controls = false;
+        v.muted = true; // start muted until a card becomes active; applyMuteState() will adjust
 
-  // Keep a small ready pool; urgent=false here (background)
-  await ensurePoolFilled(false);
+        // No poster (prevents Redgifs 403 hotlink issues)
 
-  // Load active only (urgent path inside fastReplace)
-  await loadForIndex(idx);
+        v.dataset.srcM4S = proxied(buildM4S(namePascal));
+        v.dataset.srcMP4 = proxied(buildMP4(namePascal));
+        v.dataset.triedFallback = "0";
 
-  // Set as active and manage media
-  if(S.active!==c) S.active=c;
+        const spinner = document.createElement("div");
+        spinner.className = "spinner";
 
-  for(const [i,sl] of S.rendered){
-    const k=sl.dataset.kind;
-    const role = i===idx ? 'active' : (i===idx-1?'prev':(i===idx+1?'next':'other'));
-    if(k==='video'){
-      const v=sl.querySelector('video'); if(!v) continue;
-      if(role==='active'){
-        attach(v,'auto');
-        if(S.timeline[i]?.playedOnce){v.classList.add('is-playing'); const th=sl.querySelector('.thumb'); if(th&&th.style.display!=='none'){th.style.opacity='0';th.addEventListener('transitionend',()=>th.style.display='none',{once:true})}}
-        badgeCtrl(sl).hide(); ensurePlay(v);
-      }else if(role==='next'){attach(v,CFG.NEXT_PRELOAD); badgeCtrl(sl).hide(); v.pause();}
-      else if(role==='prev'){attach(v,'metadata'); badgeCtrl(sl).hide(); v.pause();}
-      else {detach(v); badgeCtrl(sl).hide();}
-    } else if(k==='iframe'){
-      if(role==='active'){ startIfr(sl.querySelector('iframe')); }
-      else { stopIfr(sl.querySelector('iframe')); }
-      badgeCtrl(sl).hide();
-    }
-  }
+        const err = document.createElement("div");
+        err.className = "err";
 
-  ensurePlaceholdersAhead(idx);
-};
+        function tryPlayIfActive(videoEl) {
+          if (videoEl !== activeVideo) return; // only play the card in focus
+          videoEl.play().catch((e) => {
+            if (e && e.name === "NotAllowedError") {
+              // Autoplay policy: force mute then retry
+              setGlobalMuted(true);
+              videoEl.play().catch(()=>{});
+            }
+          });
+        }
 
-// ================= STARTUP =================
-const showErr=msg=>{const h=app.querySelector('.slide');if(h)h.innerHTML='<div class="error">'+msg+'</div>'};
-const loadSubs=async()=>{
-  const r=await fetch('./subreddits.json'); if(!r.ok) throw 0;
-  const j=await r.json();
-  const a=Array.isArray(j?.Subreddits)?j.Subreddits:[];
-  const subs=a.map(s=>String(s).replace(/^r\//i,'').trim()).filter(Boolean);
-  if(!subs.length) throw 0;
-  return subs;
-};
+        v.addEventListener("loadedmetadata", () => {
+          spinner.style.display = "none";
+          // Only attempt to play if this is the active video
+          tryPlayIfActive(v);
+        });
 
-const init=async()=>{
-  try{ S.subs=await loadSubs(); }
-  catch(e){ showErr('Failed to load subreddits.json (expected {"Subreddits": [ ... ]})'); return; }
+        v.addEventListener("error", () => {
+          const tried = v.dataset.triedFallback === "1";
+          if (!tried) {
+            v.dataset.triedFallback = "1";
+            limiter(() => {
+              if (!v.src || v.src === v.dataset.srcM4S) {
+                v.src = v.dataset.srcMP4;
+                v.load();
+                // don't auto-play neighbors; will play when/if it becomes active
+                tryPlayIfActive(v);
+                retainVideo(v);
+              }
+            });
+          } else {
+            spinner.style.display = "none";
+            err.style.display = "grid";
+            err.textContent = "Playback error. Scroll away and back, or try another browser.";
+          }
+        });
 
-  const i0=addPlaceholder(); ensureRendered(i0);
-  S.cand=app.querySelector('.slide');
+        inner.appendChild(v);
+        inner.appendChild(spinner);
+        inner.appendChild(err);
+        card.appendChild(inner);
+        return { card, video: v };
+      }
 
-  // Warm the pool once so first slide is quick (respects caps)
-  await ensurePoolFilled(true);
+      /* ===========================
+         Feed loading / pagination
+      ============================ */
+      async function fetchPage() {
+        if (fetching) return;
+        fetching = true;
+        sentinel.textContent = "Loading…";
+        try {
+          const url = FEED_URL + (after ? `&after=${encodeURIComponent(after)}` : "");
+          const res = await fetch(url, { credentials: "omit", mode: "cors", redirect: "follow" });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const json = await res.json();
+          after = json?.data?.after || null;
 
-  S.scrolling=false;
-  await commit();
-};
+          const items = (json?.data?.children || [])
+            .map(x => x?.data)
+            .filter(Boolean);
 
-const consent=()=>{localStorage.setItem('adult_ok','1');document.getElementById('gate')?.remove();init()};
-const showGate=()=>{const g=document.getElementById('gate');g.style.display='grid';g.querySelector('.enter').onclick=consent;g.querySelector('.leave').onclick=()=>location.href='https://www.reddit.com'};
-localStorage.getItem('adult_ok')==='1'?init():showGate();
+          const redgifs = [];
+          for (const it of items) {
+            const iframeHTML = it?.secure_media_embed?.content || it?.media_embed?.content || "";
+            const slugLower = iframeSlug(iframeHTML) ||
+                              /redgifs\.com\/watch\/([a-z0-9_]+)/i.exec(it?.url_overridden_by_dest || "")?.[1]?.toLowerCase() ||
+                              null;
+            if (!slugLower || seenSlugs.has(slugLower)) continue;
 
-document.addEventListener('visibilitychange',()=>{if(document.hidden&&S.active){S.active.dataset.kind==='video'?S.active.querySelector('video')?.pause():S.active.querySelector('iframe')?.setAttribute('src','about:blank')}else commit()});
-})();
-</script>
+            const fromThumb = byCaseFromThumb(it?.secure_media?.oembed?.thumbnail_url);
+            const namePascal = fromThumb || lowerToGuessPascal(slugLower);
+            if (!namePascal) continue;
+
+            seenSlugs.add(slugLower);
+            redgifs.push({ title: it.title || "", namePascal, slugLower });
+          }
+
+          const frag = document.createDocumentFragment();
+          for (const entry of redgifs) {
+            const { card } = cardDOM(entry);
+            frag.appendChild(card);
+          }
+          scroller.insertBefore(frag, sentinel);
+
+          sentinel.textContent = after ? "Loading…" : "End of feed.";
+        } catch (err) {
+          sentinel.textContent = "Failed to load feed.";
+          console.error(err);
+        } finally {
+          fetching = false;
+        }
+      }
+
+      // Load first page immediately
+      fetchPage();
+
+      // Infinite scroll: when sentinel gets close, load more
+      const moreObserver = new IntersectionObserver((entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting && !fetching) {
+            fetchPage();
+          }
+        }
+      }, { root: scroller, threshold: 0.1 });
+      moreObserver.observe(sentinel);
+
+      /* ===========================
+         Playback / caching management
+      ============================ */
+      const playObserver = new IntersectionObserver((entries) => {
+        const visible = entries
+          .filter(e => e.isIntersecting)
+          .sort((a,b) => b.intersectionRatio - a.intersectionRatio);
+        if (!visible.length) return;
+        const targetCard = visible[0].target;
+        activateCard(targetCard);
+      }, { root: scroller, threshold: [0, SNAP_PLAY_THRESHOLD, 1] });
+
+      const activityObserver = new MutationObserver(() => {
+        $$(".card").forEach(c => playObserver.observe(c));
+      });
+      activityObserver.observe(scroller, { childList: true });
+
+      function siblingsOf(card) {
+        let prev = card.previousElementSibling;
+        let next = card.nextElementSibling;
+        while (prev && !prev.classList.contains("card")) prev = prev.previousElementSibling;
+        while (next && !next.classList.contains("card")) next = next.nextElementSibling;
+        return { prev, next };
+      }
+
+      function ensureAttached(v) {
+        if (!v || v.src) return;
+        limiter(() => {
+          v.src = v.dataset.srcM4S; // first try M4S
+          v.load();
+          retainVideo(v);
+        });
+      }
+
+      function activateCard(card) {
+        if (!card) return;
+        const v = $("video", card);
+        if (activeVideo && activeVideo.closest(".card") === card) return;
+
+        // Pause and hard-mute all others
+        $$(".card video").forEach(x => {
+          if (x !== v) {
+            try { x.pause(); } catch {}
+            x.muted = true;
+          }
+        });
+
+        activeVideo = v;
+
+        // Update header with this card's title
+        headerTitle.textContent = card.dataset.title || "Untitled";
+
+        // Attach src for current + neighbors (neighbors won't auto-play)
+        const { prev, next } = siblingsOf(card);
+        ensureAttached(v);
+        if (prev) ensureAttached($("video", prev));
+        if (next) ensureAttached($("video", next));
+
+        applyMuteState(); // only active may be unmuted if globalMuted === false
+
+        v.loop = true;
+        v.play().catch(e => {
+          if (e && e.name === "NotAllowedError") {
+            setGlobalMuted(true);
+            v.play().catch(()=>{});
+          }
+        });
+
+        retainVideo(v);
+        if (prev) retainVideo($("video", prev));
+        if (next) retainVideo($("video", next));
+        evictIfNeeded();
+      }
+
+      // On scroll end, ensure we activate the most centered card
+      let scrollTimer = null;
+      scroller.addEventListener("scroll", () => {
+        clearTimeout(scrollTimer);
+        scrollTimer = setTimeout(() => {
+          let best = null, bestDist = Infinity;
+          $$(".card").forEach(card => {
+            const rect = card.getBoundingClientRect();
+            const cardMid = rect.top + rect.height / 2;
+            const dist = Math.abs(cardMid - window.innerHeight / 2);
+            if (dist < bestDist) { best = card; bestDist = dist; }
+          });
+          if (best) activateCard(best);
+        }, 120);
+      });
+
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+          if (activeVideo) { try { activeVideo.pause(); } catch {} }
+        } else {
+          if (activeVideo) { limiter(() => activeVideo.play().catch(()=>{})); }
+        }
+      });
+    })();
+  </script>
 </body>
 </html>
