@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <title>TikTok-style RedGIFs feed</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <style>
     :root { color-scheme: dark light; }
     * { box-sizing: border-box; }
@@ -13,38 +13,46 @@
       background: #0b0c10;
       color: #e8f0fe;
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, "Helvetica Neue", Arial;
-      overflow: hidden; /* the scroller handles scroll */
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
 
-    /* Header shows current post title */
+    /* Title overlay — bottom-left */
     header {
       position: fixed;
-      top: 0; left: 0; right: 0;
-      min-height: 52px;
-      display: flex;
-      align-items: center;
-      padding: 10px 14px;
-      background: linear-gradient(180deg, rgba(11,12,16,.9) 0%, rgba(11,12,16,.4) 60%, rgba(11,12,16,0) 100%);
-      z-index: 5;
-      pointer-events: none;
+      left: 12px;
+      bottom: calc(12px + env(safe-area-inset-bottom));
+      top: auto; right: auto;
+      z-index: 6;
+      pointer-events: none; /* let scroll/taps through */
     }
     header h1 {
       margin: 0;
-      font-size: clamp(12px, 2.5vw, 18px);
+      padding: 8px 12px;
+      max-width: min(92vw, 680px);
+      font-size: clamp(12px, 2.6vw, 18px);
       font-weight: 600;
       letter-spacing: .2px;
-      color: #c7d2fe;
-      max-width: 92%;
-      white-space: nowrap;
+      color: #e8eaff;
+      line-height: 1.25;
+      /* subtle glassy pill for readability */
+      background: linear-gradient(180deg, rgba(15,18,28,.78), rgba(15,18,28,.58));
+      border: 1px solid rgba(77,89,128,.35);
+      border-radius: 12px;
+      backdrop-filter: blur(6px);
       overflow: hidden;
       text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;       /* clamp to 2 lines on small screens */
+      -webkit-box-orient: vertical;
+      white-space: normal;
     }
 
-    /* Global controls */
     .global-controls {
       position: fixed;
       right: 12px;
-      bottom: 16px;
+      bottom: calc(16px + env(safe-area-inset-bottom));
       display: flex;
       gap: 8px;
       z-index: 10;
@@ -60,52 +68,62 @@
       cursor: pointer;
       font-size: 12px;
       backdrop-filter: blur(6px);
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
     }
     .btn:hover { background: rgba(31,41,55,.8); }
 
-    /* Vertical snap scroller */
     .scroller {
       position: fixed;
       inset: 0;
       overflow-y: auto;
-      scroll-snap-type: y mandatory;
-      scroll-behavior: smooth;
-      -webkit-overflow-scrolling: touch;
       overscroll-behavior-y: contain;
+      -webkit-overflow-scrolling: touch;
+      scroll-snap-type: y mandatory;
+      scroll-padding-top: 0;
+      touch-action: pan-y;
+      scrollbar-width: none;
     }
+    .scroller::-webkit-scrollbar { display: none; }
 
     .card {
       position: relative;
-      height: 100vh;
       width: 100vw;
+      height: 100dvh; /* mobile-friendly */
+      height: 100vh;  /* fallback */
       scroll-snap-align: start;
+      scroll-snap-stop: always;
       display: grid;
       place-items: center;
       background: #000;
       border-bottom: 1px solid #12151f;
       user-select: none;
+      content-visibility: auto;
+      contain: layout style paint;
+      contain-intrinsic-size: 100vh;
     }
+    .card.prewarm { content-visibility: visible; }
 
-    /* Full (uncropped) video always visible */
     .inner {
       position: relative;
       width: 100vw;
-      height: 100vh;
+      height: 100dvh; /* ensure the media box matches the viewport height exactly */
+      height: 100%;   /* fallback */
       display: grid;
       place-items: center;
       background: #000;
-      overflow: hidden;
+      overflow: hidden; /* prevents any escape outside bounds */
     }
 
-    /* Foreground video */
+    /* Foreground video — fully visible (no crop), always contained */
     .inner > video.foreground {
       position: relative;
       z-index: 1;
       width: 100%;
       height: 100%;
       max-width: 100vw;
-      max-height: 100vh;
-      object-fit: contain;
+      max-height: 100dvh;  /* clamp to viewport height */
+      object-fit: contain; /* never crop; add bars as needed */
       display: block;
       background: transparent;
       opacity: 0;
@@ -113,31 +131,32 @@
       will-change: opacity;
     }
 
-    /* Blurred background mirror of the same video stream */
+    /* Blurred background mirror fills and covers the frame */
     .video-bg, #videoBackground {
       position: absolute;
       inset: 0;
       z-index: 0;
       pointer-events: none;
-      width: inherit;
-      height: inherit;
-      -webkit-filter: blur(33px);
-      -o-filter: blur(33px);
-      filter: blur(33px);
-      object-fit: cover;
-      transform: scale(1.06); /* Hide edge blur */
+      width: 100%;
+      height: 100%;
+      -webkit-filter: blur(15px);
+      -o-filter: blur(5px);
+      filter: blur(5px);
+      object-fit: cover;  /* cover to fill, hidden by outer overflow */
+      transform: scale(1.06);
       opacity: 0;
       transition: opacity 260ms ease;
       will-change: opacity;
     }
 
-    /* When ready, fade both videos in sync */
-    .inner.show .foreground,
-    .inner.show .video-bg {
-      opacity: 1;
-    }
+    /* First-frame during approach and when revisiting */
+    .inner.peek .foreground,
+    .inner.peek .video-bg { opacity: 1; }
 
-    /* Loading / error states */
+    /* When actively playing */
+    .inner.show .foreground,
+    .inner.show .video-bg { opacity: 1; }
+
     .spinner, .err {
       position: absolute;
       inset: 0;
@@ -169,23 +188,29 @@
       z-index: 2;
     }
     .spinner.hidden { opacity: 0; }
-    .spinner.gone { display: none; }
+    .spinner.gone  { display: none; }
 
-    /* End sentinel space */
     .end {
       height: 40vh;
       display: grid;
       place-items: center;
       color: #9ca3af;
       font-size: 13px;
+      scroll-snap-align: none;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .inner > video.foreground,
+      .video-bg, #videoBackground,
+      .spinner { transition: none !important; }
     }
   </style>
 </head>
 <body>
+  <!-- Title overlay moved to bottom-left -->
   <header><h1 id="headerTitle">Loading…</h1></header>
 
   <main id="scroller" class="scroller" aria-label="TikTok-style video feed">
-    <!-- Cards get appended here -->
     <div id="sentinel" class="end">Loading…</div>
   </main>
 
@@ -202,78 +227,63 @@
       ============================ */
       const MULTI = "BiggerThanYouThought+TikTokNSFW";
       const FEED_URL = "https://www.reddit.com/r/" + encodeURIComponent(MULTI) + "/.json?raw_json=1";
-
       const PROXY = "https://api.codetabs.com/v1/proxy?quest=";
-      const SNAP_PLAY_THRESHOLD = 0.6;  // % of card visible to switch playback
-      const RATE_LIMIT_PER_SEC = 5;     // Codetabs documented limit
-      const CACHE_CAP = 8;              // how many videos to keep attached (LRU)
+      const RATE_LIMIT_PER_SEC = 5;
+      const CACHE_CAP = 8;
+      const FULL_FOCUS_THRESHOLD = 0.999;
+      const LOAD_MORE_THRESHOLD = 0.12;
 
       /* ===========================
          Helpers
       ============================ */
-      const $ = (sel, el = document) => el.querySelector(sel);
+      const $  = (sel, el = document) => el.querySelector(sel);
       const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
-      const encode = encodeURIComponent;
+      const enc = encodeURIComponent;
 
-      // Token bucket limiter to *initiate* media loads at <=5/s.
       const limiter = (() => {
         let tokens = RATE_LIMIT_PER_SEC;
-        const queue = [];
+        const q = [];
         setInterval(() => {
-          tokens = Math.min(tokens + RATE_LIMIT_PER_SEC, RATE_LIMIT_PER_SEC);
-          while (tokens > 0 && queue.length) {
-            tokens--; queue.shift()();
-          }
+          tokens = Math.min(RATE_LIMIT_PER_SEC, tokens + RATE_LIMIT_PER_SEC);
+          while (tokens > 0 && q.length) { tokens--; q.shift()(); }
         }, 1000);
-        return (fn) => {
-          if (tokens > 0) { tokens--; fn(); }
-          else { queue.push(fn); }
-        };
+        return (fn) => { tokens > 0 ? (tokens--, fn()) : q.push(fn); };
       })();
 
-      function proxied(url) {
-        return PROXY + encode(url);
-      }
+      const proxied   = (url) => PROXY + enc(url);
+      const posterKey = (thumbUrl) => /media\.redgifs\.com\/([^\/?#]+)-poster/i.exec(thumbUrl || "")?.[1] || null;
+      const pascalize = (slug) => slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : null;
+      const iframeSlug= (html) => /redgifs\.com\/ifr\/([a-z0-9_]+)/i.exec(html || "")?.[1]?.toLowerCase() || null;
 
-      function byCaseFromThumb(thumbUrl) {
-        const m = /media\.redgifs\.com\/([^\/?#]+)-poster/i.exec(thumbUrl || "");
-        return m ? m[1] : null;
-      }
-
-      function lowerToGuessPascal(slug) {
-        return slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : null;
-      }
-
-      function iframeSlug(html) {
-        const m = /redgifs\.com\/ifr\/([a-z0-9_]+)/i.exec(html || "");
-        return m ? m[1].toLowerCase() : null;
-      }
-
-      function buildM4S(namePascal) {
-        return `https://media.redgifs.com/${namePascal}-mobile.m4s`;
-      }
-      function buildMP4(namePascal) {
-        return `https://media.redgifs.com/${namePascal}-mobile.mp4`;
-      }
+      const m4s = (n) => `https://media.redgifs.com/${n}-mobile.m4s`;
+      const mp4 = (n) => `https://media.redgifs.com/${n}-mobile.mp4`;
 
       /* ===========================
-         Global state
+         State
       ============================ */
-      const scroller = $("#scroller");
-      const sentinel = $("#sentinel");
-      const muteBtn = $("#muteBtn");
-      const headerTitle = $("#headerTitle");
+      const scroller     = $("#scroller");
+      const sentinel     = $("#sentinel");
+      const muteBtn      = $("#muteBtn");
+      const headerTitle  = $("#headerTitle");
 
       let after = null;
       let fetching = false;
-      let activeVideo = null;
 
-      // "globalMuted" means "should the ACTIVE video be muted?"
+      // Playback
+      let activeVideo = null;
       let globalMuted = JSON.parse(localStorage.getItem("globalMuted") ?? "true");
 
-      // LRU list of videos with src attached (for caching)
+      // Gate activation while scrolling
+      let scrollingActive = false;
+      let pendingCard = null;
+
+      // Randomization + de-dupe
+      const pool = [];
+      const seenSlugs = new Set();
+      const displayedSlugs = new Set();
+
+      // Cache of attached videos
       const retained = [];
-      const seenSlugs = new Set(); // avoid duplicates across pages
 
       function retainVideo(v) {
         const i = retained.indexOf(v);
@@ -281,7 +291,6 @@
         retained.push(v);
         evictIfNeeded();
       }
-
       function evictIfNeeded() {
         const keep = new Set();
         if (activeVideo) {
@@ -291,80 +300,65 @@
           if (next) keep.add($("video.foreground", next));
         }
         while (retained.length > CACHE_CAP) {
-          const candidate = retained[0];
-          if (keep.has(candidate)) { retained.shift(); retained.push(candidate); continue; }
-          try { candidate.pause(); } catch {}
-          if (candidate.src) { candidate.removeAttribute("src"); candidate.load(); }
+          const cand = retained[0];
+          if (keep.has(cand)) { retained.shift(); retained.push(cand); continue; }
+          try { cand.pause(); } catch {}
+          if (cand.src) { cand.removeAttribute("src"); cand.load(); }
           retained.shift();
         }
       }
 
       function applyMuteState() {
-        $$(".card video.foreground").forEach(v => {
-          v.muted = (v !== activeVideo) || globalMuted;
-        });
+        $$(".card video.foreground").forEach(v => { v.muted = (v !== activeVideo) || globalMuted; });
         muteBtn.textContent = globalMuted ? "Unmute" : "Mute";
       }
-
-      function setGlobalMuted(value) {
-        globalMuted = Boolean(value);
+      function setGlobalMuted(v) {
+        globalMuted = !!v;
         localStorage.setItem("globalMuted", JSON.stringify(globalMuted));
         applyMuteState();
         if (activeVideo) activeVideo.play().catch(()=>{});
       }
-
       muteBtn.addEventListener("click", () => setGlobalMuted(!globalMuted));
-      applyMuteState(); // init UI
+      applyMuteState();
 
       /* ===========================
-         Mirror the foreground video into a blurred background without extra requests
+         Background mirror (no extra requests)
       ============================ */
-      function attachBackgroundMirror(fg, bg) {
-        if (bg.dataset.mirrored === "1") return Promise.resolve();
+      function ensureBgMirror(fg, bg) {
+        if (!bg || bg.dataset.mirrored === "1") return;
         try {
-          const capture = fg.captureStream ? fg.captureStream() :
-                          (fg.mozCaptureStream ? fg.mozCaptureStream() : null);
-          if (!capture) return Promise.resolve(); // Not supported
-          capture.getAudioTracks().forEach(t => t.enabled = false);
-          bg.srcObject = capture;
-          bg.muted = true;
-          bg.playsInline = true;
-          bg.autoplay = true;
-
+          const cap = fg.captureStream ? fg.captureStream() :
+                      (fg.mozCaptureStream ? fg.mozCaptureStream() : null);
+          if (!cap) return;
+          cap.getAudioTracks().forEach(t => t.enabled = false);
+          bg.srcObject = cap;
+          bg.muted = true; bg.playsInline = true; bg.autoplay = true;
           bg.dataset.mirrored = "1";
-          return new Promise((resolve) => {
-            const done = () => { bg.removeEventListener("playing", done); resolve(); };
-            bg.addEventListener("playing", done, { once: true });
-            bg.play().catch(() => resolve()); // muted -> should autoplay; if not, just resolve
-            setTimeout(resolve, 180); // small fallback so the fade stays in sync
-          });
+          bg.play().catch(()=>{});
         } catch {
           bg.style.display = "none";
-          return Promise.resolve();
         }
       }
 
       /* ===========================
-         DOM builders
+         DOM
       ============================ */
       function cardDOM({ title, namePascal, slugLower }) {
         const card = document.createElement("section");
         card.className = "card";
-        card.dataset.slug = slugLower || "";
-        card.dataset.name = namePascal || "";
+        card.dataset.slug = slugLower;
+        card.dataset.name = namePascal;
         card.dataset.title = title || "";
 
         const inner = document.createElement("div");
         inner.className = "inner";
 
-        // Background mirror (no src! will use captureStream of the foreground)
         const bg = document.createElement("video");
         bg.className = "video-bg";
         bg.setAttribute("aria-hidden", "true");
         bg.tabIndex = -1;
         bg.controls = false;
 
-        // Foreground video
         const v = document.createElement("video");
         v.className = "foreground";
         v.setAttribute("playsinline", "");
@@ -373,12 +367,10 @@
         v.crossOrigin = "anonymous";
         v.setAttribute("x-webkit-airplay","allow");
         v.controls = false;
-        v.muted = true; // until it becomes active (applyMuteState handles it)
+        v.muted = true;
 
-        // No poster (prevents Redgifs 403 hotlink issues)
-
-        v.dataset.srcM4S = proxied(buildM4S(namePascal));
-        v.dataset.srcMP4 = proxied(buildMP4(namePascal));
+        v.dataset.srcM4S = proxied(m4s(namePascal));
+        v.dataset.srcMP4 = proxied(mp4(namePascal));
         v.dataset.triedFallback = "0";
 
         const spinner = document.createElement("div");
@@ -387,32 +379,30 @@
         const err = document.createElement("div");
         err.className = "err";
 
-        function hideSpinnerSmooth() {
-          spinner.classList.add("hidden");
-          setTimeout(() => spinner.classList.add("gone"), 220);
-        }
+        const hideSpinner = () => { spinner.classList.add("hidden"); setTimeout(() => spinner.classList.add("gone"), 220); };
 
-        function tryPlayIfActive(videoEl) {
-          if (videoEl !== activeVideo) return; // only play the card in focus
-          videoEl.play().catch((e) => {
-            if (e && e.name === "NotAllowedError") {
-              setGlobalMuted(true);
-              videoEl.play().catch(()=>{});
-            }
+        function tryPlayIfActive(el) {
+          if (el !== activeVideo) return;
+          el.play().catch((e) => {
+            if (e && e.name === "NotAllowedError") { setGlobalMuted(true); el.play().catch(()=>{}); }
           });
         }
 
-        v.addEventListener("loadedmetadata", () => {
-          // Wait for actual playback to ensure we fade both bg+fg in sync
+        function ensurePeekNow() {
+          inner.classList.add("peek");
+          hideSpinner();
+          ensureBgMirror(v, bg);
+        }
+
+        v.addEventListener("loadeddata", () => {
+          ensurePeekNow();      // first frame decoded => show fg+bg immediately
           tryPlayIfActive(v);
         });
 
-        // When the foreground starts playing, mirror to bg and fade both in together
-        v.addEventListener("playing", async () => {
-          await attachBackgroundMirror(v, bg);
-          hideSpinnerSmooth();
-          inner.classList.add("show"); // triggers CSS fade-in on both videos
-        }, { once: true });
+        // If already buffered (revisiting / fast scroll back), peek instantly.
+        setTimeout(() => { if (v.readyState >= 2) ensurePeekNow(); }, 0);
+
+        v.addEventListener("playing", () => { inner.classList.add("show"); });
 
         v.addEventListener("error", () => {
           const tried = v.dataset.triedFallback === "1";
@@ -427,14 +417,14 @@
               }
             });
           } else {
-            hideSpinnerSmooth();
+            hideSpinner();
             err.style.display = "grid";
             err.textContent = "Playback error. Scroll away and back, or try another browser.";
           }
         });
 
-        inner.appendChild(bg);       // background first
-        inner.appendChild(v);        // then foreground above it
+        inner.appendChild(bg);
+        inner.appendChild(v);
         inner.appendChild(spinner);
         inner.appendChild(err);
         card.appendChild(inner);
@@ -442,100 +432,134 @@
       }
 
       /* ===========================
-         Feed loading / pagination
+         Randomization helpers
+      ============================ */
+      function pushToPool(entries) {
+        for (const e of entries) if (!displayedSlugs.has(e.slugLower)) pool.push(e);
+      }
+      function takeRandom(k) {
+        const out = [];
+        for (let i = 0; i < k && pool.length; i++) {
+          const idx = Math.floor(Math.random() * pool.length);
+          out.push(pool.splice(idx, 1)[0]);
+        }
+        return out;
+      }
+      function appendEntries(entries) {
+        const frag = document.createDocumentFragment();
+        for (const entry of entries) {
+          displayedSlugs.add(entry.slugLower);
+          const { card } = cardDOM(entry);
+          frag.appendChild(card);
+        }
+        scroller.insertBefore(frag, sentinel);
+        // Observe newly added cards
+        $$(":scope > .card", scroller).forEach(c => {
+          fullObserver.observe(c);
+          cullObserver.observe(c);
+          prewarmObserver.observe(c);
+        });
+      }
+
+      /* ===========================
+         Fetch / paginate
       ============================ */
       async function fetchPage() {
         if (fetching) return;
         fetching = true;
         sentinel.textContent = "Loading…";
         try {
-          const url = FEED_URL + (after ? `&after=${encodeURIComponent(after)}` : "");
+          const url = FEED_URL + (after ? `&after=${enc(after)}` : "");
           const res = await fetch(url, { credentials: "omit", mode: "cors", redirect: "follow" });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const json = await res.json();
           after = json?.data?.after || null;
 
-          const items = (json?.data?.children || [])
-            .map(x => x?.data)
-            .filter(Boolean);
-
-          const redgifs = [];
+          const items = (json?.data?.children || []).map(x => x?.data).filter(Boolean);
+          const pageBatch = [];
           for (const it of items) {
             const iframeHTML = it?.secure_media_embed?.content || it?.media_embed?.content || "";
             const slugLower = iframeSlug(iframeHTML) ||
-                              /redgifs\.com\/watch\/([a-z0-9_]+)/i.exec(it?.url_overridden_by_dest || "")?.[1]?.toLowerCase() ||
-                              null;
+              /redgifs\.com\/watch\/([a-z0-9_]+)/i.exec(it?.url_overridden_by_dest || "")?.[1]?.toLowerCase() ||
+              null;
             if (!slugLower || seenSlugs.has(slugLower)) continue;
 
-            const fromThumb = byCaseFromThumb(it?.secure_media?.oembed?.thumbnail_url);
-            const namePascal = fromThumb || lowerToGuessPascal(slugLower);
+            const fromThumb = posterKey(it?.secure_media?.oembed?.thumbnail_url);
+            const namePascal = fromThumb || pascalize(slugLower);
             if (!namePascal) continue;
 
             seenSlugs.add(slugLower);
-            redgifs.push({ title: it.title || "", namePascal, slugLower });
+            pageBatch.push({ title: it.title || "", namePascal, slugLower });
           }
 
-          const frag = document.createDocumentFragment();
-          for (const entry of redgifs) {
-            const { card } = cardDOM(entry);
-            frag.appendChild(card);
-          }
-          scroller.insertBefore(frag, sentinel);
+          pushToPool(pageBatch);
+          const toAppend = takeRandom(pageBatch.length);
+          appendEntries(toAppend);
 
           sentinel.textContent = after ? "Loading…" : "End of feed.";
-        } catch (err) {
+        } catch (e) {
           sentinel.textContent = "Failed to load feed.";
-          console.error(err);
-        } finally {
-          fetching = false;
-        }
+          console.error(e);
+        } finally { fetching = false; }
       }
 
-      // Load first page immediately
-      fetchPage();
-
-      // Infinite scroll: when sentinel gets close, load more
+      // Load more when near the end
       const moreObserver = new IntersectionObserver((entries) => {
         for (const e of entries) {
-          if (e.isIntersecting && !fetching) {
-            fetchPage();
-          }
+          if (e.isIntersecting && !fetching) fetchPage();
         }
-      }, { root: scroller, threshold: 0.1 });
+      }, { root: scroller, threshold: LOAD_MORE_THRESHOLD });
       moreObserver.observe(sentinel);
 
       /* ===========================
-         Playback / caching management
+         Prewarm (attach + buffer + paint first frame before focus)
       ============================ */
-      const playObserver = new IntersectionObserver((entries) => {
-        const visible = entries
-          .filter(e => e.isIntersecting)
-          .sort((a,b) => b.intersectionRatio - a.intersectionRatio);
-        if (!visible.length) return;
-        const targetCard = visible[0].target;
-        activateCard(targetCard);
-      }, { root: scroller, threshold: [0, SNAP_PLAY_THRESHOLD, 1] });
-
-      const activityObserver = new MutationObserver(() => {
-        $$(".card").forEach(c => playObserver.observe(c));
-      });
-      activityObserver.observe(scroller, { childList: true });
-
-      function siblingsOf(card) {
-        let prev = card.previousElementSibling;
-        let next = card.nextElementSibling;
-        while (prev && !prev.classList.contains("card")) prev = prev.previousElementSibling;
-        while (next && !next.classList.contains("card")) next = next.nextElementSibling;
-        return { prev, next };
-      }
-
-      function ensureAttached(v) {
+      function ensureAttached(v, prewarm=false) {
         if (!v || v.src) return;
         limiter(() => {
-          v.src = v.dataset.srcM4S; // first try M4S
+          v.preload = prewarm ? "auto" : "metadata";
+          v.src = v.dataset.srcM4S;
           v.load();
           retainVideo(v);
         });
+      }
+
+      function ensurePeekForCard(card) {
+        const inner = card.querySelector(".inner");
+        const v = card.querySelector("video.foreground");
+        const bg = card.querySelector(".video-bg");
+        if (!inner || !v) return;
+        if (v.readyState >= 2) {
+          inner.classList.add("peek");
+          const sp = inner.querySelector(".spinner");
+          if (sp && !sp.classList.contains("gone")) { sp.classList.add("hidden"); setTimeout(() => sp.classList.add("gone"), 220); }
+          ensureBgMirror(v, bg);
+        }
+      }
+
+      const prewarmObserver = new IntersectionObserver((entries) => {
+        for (const e of entries) {
+          const card = e.target;
+          if (e.isIntersecting) {
+            card.classList.add("prewarm");
+            const v = card.querySelector("video.foreground");
+            ensureAttached(v, /*prewarm=*/true);
+            ensurePeekForCard(card);
+          } else {
+            if (activeVideo && card.contains(activeVideo)) continue;
+            card.classList.remove("prewarm");
+          }
+        }
+      }, { root: scroller, rootMargin: "200% 0% 200% 0%", threshold: 0.01 });
+
+      /* ===========================
+         Full-focus switching (native-feel)
+      ============================ */
+      function siblingsOf(card) {
+        let prev = card.previousElementSibling, next = card.nextElementSibling;
+        while (prev && !prev.classList.contains("card")) prev = prev.previousElementSibling;
+        while (next && !next.classList.contains("card")) next = next.nextElementSibling;
+        return { prev, next };
       }
 
       function activateCard(card) {
@@ -543,33 +567,26 @@
         const v = $("video.foreground", card);
         if (activeVideo && activeVideo.closest(".card") === card) return;
 
-        // Pause and hard-mute all other foreground videos
-        $$(".card video.foreground").forEach(x => {
-          if (x !== v) {
-            try { x.pause(); } catch {}
-            x.muted = true;
-          }
-        });
+        // Pause + hard-mute others AFTER fully focused
+        $$(".card video.foreground").forEach(x => { if (x !== v) { try { x.pause(); } catch {} x.muted = true; } });
 
         activeVideo = v;
-
-        // Update header with this card's title
         headerTitle.textContent = card.dataset.title || "Untitled";
 
-        // Attach src for current + neighbors (neighbors won't auto-play)
         const { prev, next } = siblingsOf(card);
-        ensureAttached(v);
-        if (prev) ensureAttached($("video.foreground", prev));
-        if (next) ensureAttached($("video.foreground", next));
 
-        applyMuteState(); // only active may be unmuted if globalMuted === false
+        ensureAttached(v, /*prewarm=*/false);
+        if (prev) ensureAttached($("video.foreground", prev), /*prewarm=*/true);
+        if (next) ensureAttached($("video.foreground", next), /*prewarm=*/true);
+
+        // Make sure both fg and bg are visible immediately if already buffered
+        ensurePeekForCard(card);
+
+        applyMuteState();
 
         v.loop = true;
         v.play().catch(e => {
-          if (e && e.name === "NotAllowedError") {
-            setGlobalMuted(true);
-            v.play().catch(()=>{});
-          }
+          if (e && e.name === "NotAllowedError") { setGlobalMuted(true); v.play().catch(()=>{}); }
         });
 
         retainVideo(v);
@@ -578,29 +595,100 @@
         evictIfNeeded();
       }
 
-      // On scroll end, ensure we activate the most centered card
-      let scrollTimer = null;
+      const FULL_FOCUS_THRESHOLD_OBS = FULL_FOCUS_THRESHOLD;
+      const fullObserver = new IntersectionObserver((entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting && e.intersectionRatio >= FULL_FOCUS_THRESHOLD_OBS) {
+            if (scrollingActive) {
+              pendingCard = e.target;     // defer until scrollend
+            } else {
+              activateCard(e.target);
+              pendingCard = null;
+            }
+          }
+        }
+      }, { root: scroller, threshold: FULL_FOCUS_THRESHOLD_OBS });
+
+      // When card leaves viewport: pause + drop "show" only (KEEP .peek for instant visual on revisit)
+      const cullObserver = new IntersectionObserver((entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) {
+            const v = e.target.querySelector("video.foreground");
+            const inner = e.target.querySelector(".inner");
+            if (inner) { inner.classList.remove("show"); /* keep .peek for instant frame */ }
+            if (v) {
+              try { v.pause(); } catch {}
+              v.muted = true;
+              if (v === activeVideo) {
+                activeVideo = null;
+                applyMuteState();
+              }
+            }
+          }
+        }
+      }, { root: scroller, threshold: 0 });
+
+      // Scroll gating
+      let seTimer = null;
       scroller.addEventListener("scroll", () => {
-        clearTimeout(scrollTimer);
-        scrollTimer = setTimeout(() => {
-          let best = null, bestDist = Infinity;
-          $$(".card").forEach(card => {
-            const rect = card.getBoundingClientRect();
-            const cardMid = rect.top + rect.height / 2;
-            const dist = Math.abs(cardMid - window.innerHeight / 2);
-            if (dist < bestDist) { best = card; bestDist = dist; }
-          });
-          if (best) activateCard(best);
-        }, 120);
+        scrollingActive = true;
+        if (seTimer) clearTimeout(seTimer);
+        seTimer = setTimeout(() => scroller.dispatchEvent(new Event("scrollend")), 120);
+      }, { passive: true });
+
+      function pickFullyVisibleCard() {
+        let best = null;
+        $$(".card", scroller).forEach(card => {
+          const r = card.getBoundingClientRect();
+          const fully = r.top >= 0 && r.bottom <= window.innerHeight + 0.5;
+          if (fully) best = card;
+        });
+        if (best) activateCard(best);
+      }
+
+      scroller.addEventListener("scrollend", () => {
+        scrollingActive = false;
+        if (pendingCard) {
+          const r = pendingCard.getBoundingClientRect();
+          if (r.top >= 0 && r.bottom <= window.innerHeight + 0.5) {
+            activateCard(pendingCard);
+            pendingCard = null;
+            return;
+          }
+          pendingCard = null;
+        }
+        pickFullyVisibleCard();
       });
 
-      document.addEventListener("visibilitychange", () => {
-        if (document.hidden) {
-          if (activeVideo) { try { activeVideo.pause(); } catch {} }
-        } else {
-          if (activeVideo) { limiter(() => activeVideo.play().catch(()=>{})); }
+      // Boot observers BEFORE first fetch
+      const bootObserver = new IntersectionObserver((entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting && e.intersectionRatio >= FULL_FOCUS_THRESHOLD_OBS && !scrollingActive) {
+            activateCard(e.target);
+            bootObserver.disconnect();
+            break;
+          } else if (e.isIntersecting && e.intersectionRatio >= FULL_FOCUS_THRESHOLD_OBS && scrollingActive) {
+            pendingCard = e.target; // defer initial start
+          }
+        }
+      }, { root: scroller, threshold: FULL_FOCUS_THRESHOLD_OBS });
+
+      const bootWait = new MutationObserver(() => {
+        const firstCard = $(".card", scroller);
+        if (firstCard) {
+          $$(":scope > .card", scroller).forEach(c => {
+            fullObserver.observe(c);
+            cullObserver.observe(c);
+            prewarmObserver.observe(c);
+            bootObserver.observe(c);
+          });
+          bootWait.disconnect();
         }
       });
+      bootWait.observe(scroller, { childList: true });
+
+      /* Start fetching AFTER observers are ready */
+      fetchPage();
     })();
   </script>
 </body>
