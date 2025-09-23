@@ -23,9 +23,8 @@
       position: fixed;
       left: 12px;
       bottom: calc(12px + env(safe-area-inset-bottom));
-      top: auto; right: auto;
       z-index: 6;
-      pointer-events: none; /* let scroll/taps through */
+      pointer-events: none;
     }
     header h1 {
       margin: 0;
@@ -36,7 +35,6 @@
       letter-spacing: .2px;
       color: #e8eaff;
       line-height: 1.25;
-      /* subtle glassy pill for readability */
       background: linear-gradient(180deg, rgba(15,18,28,.78), rgba(15,18,28,.58));
       border: 1px solid rgba(77,89,128,.35);
       border-radius: 12px;
@@ -44,7 +42,7 @@
       overflow: hidden;
       text-overflow: ellipsis;
       display: -webkit-box;
-      -webkit-line-clamp: 2;       /* clamp to 2 lines on small screens */
+      -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
       white-space: normal;
     }
@@ -89,7 +87,7 @@
     .card {
       position: relative;
       width: 100vw;
-      height: 100dvh; /* mobile-friendly */
+      height: 100dvh;
       height: 100vh;  /* fallback */
       scroll-snap-align: start;
       scroll-snap-stop: always;
@@ -107,55 +105,44 @@
     .inner {
       position: relative;
       width: 100vw;
-      height: 100dvh; /* ensure the media box matches the viewport height exactly */
-      height: 100%;   /* fallback */
+      height: 100%;
       display: grid;
       place-items: center;
       background: #000;
-      overflow: hidden; /* prevents any escape outside bounds */
+      overflow: hidden;
     }
 
-    /* Foreground video — fully visible (no crop), always contained */
+    /* Foreground video — always fully contained (no crop) */
     .inner > video.foreground {
       position: relative;
-      z-index: 1;
+      z-index: 2;
       width: 100%;
       height: 100%;
       max-width: 100vw;
-      max-height: 100dvh;  /* clamp to viewport height */
-      object-fit: contain; /* never crop; add bars as needed */
+      max-height: 100dvh;
+      object-fit: contain;
       display: block;
       background: transparent;
       opacity: 0;
       transition: opacity 260ms ease;
-      will-change: opacity;
     }
 
-    /* Blurred background mirror fills and covers the frame */
-    .video-bg, #videoBackground {
+    /* Canvas blurred background (no transitions → no flash) */
+    .video-bg-canvas {
       position: absolute;
       inset: 0;
-      z-index: 0;
+      z-index: 1;
       pointer-events: none;
       width: 100%;
       height: 100%;
-      -webkit-filter: blur(15px);
-      -o-filter: blur(5px);
       filter: blur(5px);
-      object-fit: cover;  /* cover to fill, hidden by outer overflow */
       transform: scale(1.06);
-      opacity: 0;
-      transition: opacity 260ms ease;
-      will-change: opacity;
+      opacity: 0; /* becomes 1 once a frame is drawn */
     }
 
-    /* First-frame during approach and when revisiting */
+    /* First frame visible during approach and revisits */
     .inner.peek .foreground,
-    .inner.peek .video-bg { opacity: 1; }
-
-    /* When actively playing */
-    .inner.show .foreground,
-    .inner.show .video-bg { opacity: 1; }
+    .inner.peek .video-bg-canvas { opacity: 1; }
 
     .spinner, .err {
       position: absolute;
@@ -163,7 +150,7 @@
       display: grid;
       place-items: center;
       pointer-events: none;
-      z-index: 2;
+      z-index: 3;
       transition: opacity 200ms ease;
     }
     .spinner:before {
@@ -185,7 +172,7 @@
       font-size: 13px;
       text-align: center;
       display: none;
-      z-index: 2;
+      z-index: 3;
     }
     .spinner.hidden { opacity: 0; }
     .spinner.gone  { display: none; }
@@ -201,13 +188,12 @@
 
     @media (prefers-reduced-motion: reduce) {
       .inner > video.foreground,
-      .video-bg, #videoBackground,
       .spinner { transition: none !important; }
     }
   </style>
 </head>
 <body>
-  <!-- Title overlay moved to bottom-left -->
+  <!-- Title overlay at bottom-left -->
   <header><h1 id="headerTitle">Loading…</h1></header>
 
   <main id="scroller" class="scroller" aria-label="TikTok-style video feed">
@@ -219,477 +205,546 @@
   </div>
 
   <script>
-    (function () {
-      "use strict";
+  (function () {
+    "use strict";
 
-      /* ===========================
-         Config
-      ============================ */
-      const MULTI = "BiggerThanYouThought+TikTokNSFW";
-      const FEED_URL = "https://www.reddit.com/r/" + encodeURIComponent(MULTI) + "/.json?raw_json=1";
-      const PROXY = "https://api.codetabs.com/v1/proxy?quest=";
-      const RATE_LIMIT_PER_SEC = 5;
-      const CACHE_CAP = 8;
-      const FULL_FOCUS_THRESHOLD = 0.999;
-      const LOAD_MORE_THRESHOLD = 0.12;
+    /* ===========================
+       Config
+    ============================ */
+    const MULTI = "BiggerThanYouThought+TikTokNSFW";
+    const FEED_URL = "https://www.reddit.com/r/" + encodeURIComponent(MULTI) + "/.json?raw_json=1";
+    const PROXY = "https://api.codetabs.com/v1/proxy?quest=";
+    const RATE_LIMIT_PER_SEC = 5;
+    const CACHE_CAP = 8;
+    const FULL_FOCUS_THRESHOLD = 0.999;
+    const LOAD_MORE_THRESHOLD = 0.12;
 
-      /* ===========================
-         Helpers
-      ============================ */
-      const $  = (sel, el = document) => el.querySelector(sel);
-      const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
-      const enc = encodeURIComponent;
+    /* ===========================
+       Helpers
+    ============================ */
+    const $  = (sel, el = document) => el.querySelector(sel);
+    const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
+    const enc = encodeURIComponent;
 
-      const limiter = (() => {
-        let tokens = RATE_LIMIT_PER_SEC;
-        const q = [];
-        setInterval(() => {
-          tokens = Math.min(RATE_LIMIT_PER_SEC, tokens + RATE_LIMIT_PER_SEC);
-          while (tokens > 0 && q.length) { tokens--; q.shift()(); }
-        }, 1000);
-        return (fn) => { tokens > 0 ? (tokens--, fn()) : q.push(fn); };
-      })();
+    // Proxy limiter for media starts (<=5/s)
+    const limiter = (() => {
+      let tokens = RATE_LIMIT_PER_SEC;
+      const q = [];
+      setInterval(() => {
+        tokens = Math.min(RATE_LIMIT_PER_SEC, tokens + RATE_LIMIT_PER_SEC);
+        while (tokens > 0 && q.length) { tokens--; q.shift()(); }
+      }, 1000);
+      return (fn) => { tokens > 0 ? (tokens--, fn()) : q.push(fn); };
+    })();
 
-      const proxied   = (url) => PROXY + enc(url);
-      const posterKey = (thumbUrl) => /media\.redgifs\.com\/([^\/?#]+)-poster/i.exec(thumbUrl || "")?.[1] || null;
-      const pascalize = (slug) => slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : null;
-      const iframeSlug= (html) => /redgifs\.com\/ifr\/([a-z0-9_]+)/i.exec(html || "")?.[1]?.toLowerCase() || null;
+    const proxied   = (url) => PROXY + enc(url);
+    const posterKey = (thumbUrl) => /media\.redgifs\.com\/([^\/?#]+)-poster/i.exec(thumbUrl || "")?.[1] || null;
+    const pascalize = (slug) => slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : null;
+    const iframeSlug= (html) => /redgifs\.com\/ifr\/([a-z0-9_]+)/i.exec(html || "")?.[1]?.toLowerCase() || null;
 
-      const m4s = (n) => `https://media.redgifs.com/${n}-mobile.m4s`;
-      const mp4 = (n) => `https://media.redgifs.com/${n}-mobile.mp4`;
+    const m4s = (n) => `https://media.redgifs.com/${n}-mobile.m4s`;
+    const mp4 = (n) => `https://media.redgifs.com/${n}-mobile.mp4`;
 
-      /* ===========================
-         State
-      ============================ */
-      const scroller     = $("#scroller");
-      const sentinel     = $("#sentinel");
-      const muteBtn      = $("#muteBtn");
-      const headerTitle  = $("#headerTitle");
+    /* ===========================
+       State
+    ============================ */
+    const scroller     = $("#scroller");
+    const sentinel     = $("#sentinel");
+    const muteBtn      = $("#muteBtn");
+    const headerTitle  = $("#headerTitle");
 
-      let after = null;
-      let fetching = false;
+    let after = null;
+    let fetching = false;
 
-      // Playback
-      let activeVideo = null;
-      let globalMuted = JSON.parse(localStorage.getItem("globalMuted") ?? "true");
+    // Playback
+    let activeVideo = null;
+    let globalMuted = JSON.parse(localStorage.getItem("globalMuted") ?? "true");
 
-      // Gate activation while scrolling
-      let scrollingActive = false;
-      let pendingCard = null;
+    // Scroll gating: don't switch mid-fling
+    let scrollingActive = false;
+    let pendingCard = null;
 
-      // Randomization + de-dupe
-      const pool = [];
-      const seenSlugs = new Set();
-      const displayedSlugs = new Set();
+    // Randomization + de-dupe
+    const pool = [];
+    const seenSlugs = new Set();
+    const displayedSlugs = new Set();
 
-      // Cache of attached videos
-      const retained = [];
+    // Cache of attached videos
+    const retained = [];
 
-      function retainVideo(v) {
-        const i = retained.indexOf(v);
-        if (i !== -1) retained.splice(i, 1);
-        retained.push(v);
-        evictIfNeeded();
+    function retainVideo(v) {
+      const i = retained.indexOf(v);
+      if (i !== -1) retained.splice(i, 1);
+      retained.push(v);
+      evictIfNeeded();
+    }
+    function evictIfNeeded() {
+      const keep = new Set();
+      if (activeVideo) {
+        keep.add(activeVideo);
+        const { prev, next } = siblingsOf(activeVideo.closest(".card"));
+        if (prev) keep.add($("video.foreground", prev));
+        if (next) keep.add($("video.foreground", next));
       }
-      function evictIfNeeded() {
-        const keep = new Set();
-        if (activeVideo) {
-          keep.add(activeVideo);
-          const { prev, next } = siblingsOf(activeVideo.closest(".card"));
-          if (prev) keep.add($("video.foreground", prev));
-          if (next) keep.add($("video.foreground", next));
-        }
-        while (retained.length > CACHE_CAP) {
-          const cand = retained[0];
-          if (keep.has(cand)) { retained.shift(); retained.push(cand); continue; }
-          try { cand.pause(); } catch {}
-          if (cand.src) { cand.removeAttribute("src"); cand.load(); }
-          retained.shift();
-        }
+      while (retained.length > CACHE_CAP) {
+        const cand = retained[0];
+        if (keep.has(cand)) { retained.shift(); retained.push(cand); continue; }
+        try { cand.pause(); } catch {}
+        if (cand.src) { cand.removeAttribute("src"); cand.load(); }
+        retained.shift();
       }
+    }
 
-      function applyMuteState() {
-        $$(".card video.foreground").forEach(v => { v.muted = (v !== activeVideo) || globalMuted; });
-        muteBtn.textContent = globalMuted ? "Unmute" : "Mute";
-      }
-      function setGlobalMuted(v) {
-        globalMuted = !!v;
-        localStorage.setItem("globalMuted", JSON.stringify(globalMuted));
-        applyMuteState();
-        if (activeVideo) activeVideo.play().catch(()=>{});
-      }
-      muteBtn.addEventListener("click", () => setGlobalMuted(!globalMuted));
+    function applyMuteState() {
+      $$(".card video.foreground").forEach(v => { v.muted = (v !== activeVideo) || globalMuted; });
+      muteBtn.textContent = globalMuted ? "Unmute" : "Mute";
+    }
+    function setGlobalMuted(v) {
+      const wantMuted = !!v;
+      globalMuted = wantMuted;
+      localStorage.setItem("globalMuted", JSON.stringify(globalMuted));
       applyMuteState();
 
-      /* ===========================
-         Background mirror (no extra requests)
-      ============================ */
-      function ensureBgMirror(fg, bg) {
-        if (!bg || bg.dataset.mirrored === "1") return;
-        try {
-          const cap = fg.captureStream ? fg.captureStream() :
-                      (fg.mozCaptureStream ? fg.mozCaptureStream() : null);
-          if (!cap) return;
-          cap.getAudioTracks().forEach(t => t.enabled = false);
-          bg.srcObject = cap;
-          bg.muted = true; bg.playsInline = true; bg.autoplay = true;
-          bg.dataset.mirrored = "1";
-          bg.play().catch(()=>{});
-        } catch {
-          bg.style.display = "none";
-        }
+      // On unmute (Firefox-friendly): pause → unmute → play inside the click gesture
+      if (!globalMuted && activeVideo) {
+        try { activeVideo.pause(); } catch {}
+        activeVideo.muted = false;
+        activeVideo.volume = 1.0;
+        activeVideo.play().catch(()=>{});
       }
+    }
+    muteBtn.addEventListener("click", () => setGlobalMuted(!globalMuted));
+    applyMuteState();
 
-      /* ===========================
-         DOM
-      ============================ */
-      function cardDOM({ title, namePascal, slugLower }) {
-        const card = document.createElement("section");
-        card.className = "card";
-        card.dataset.slug = slugLower;
-        card.dataset.name = namePascal;
-        card.dataset.title = title || "";
+    /* ===========================
+       Canvas background (no flash)
+    ============================ */
+    function fitAndDrawToCanvas(canvas, video, container) {
+      if (!canvas || !video || video.readyState < 2) return;
+      const cw = container.clientWidth || window.innerWidth;
+      const ch = container.clientHeight || window.innerHeight;
+      if (canvas.width !== cw || canvas.height !== ch) {
+        canvas.width = cw; canvas.height = ch;
+      }
+      const vw = video.videoWidth || 16;
+      const vh = video.videoHeight || 9;
+      const ctx = canvas.getContext("2d"); if (!ctx) return;
 
-        const inner = document.createElement("div");
-        inner.className = "inner";
+      const contAR = cw / ch, vidAR = vw / vh;
+      let dw, dh, dx, dy;
+      if (contAR > vidAR) { dw = cw; dh = Math.round(cw / vidAR); dx = 0; dy = Math.round((ch - dh)/2); }
+      else { dh = ch; dw = Math.round(ch * vidAR); dx = Math.round((cw - dw)/2); dy = 0; }
 
-        const bg = document.createElement("video");
-        bg.className = "video-bg";
-        bg.setAttribute("aria-hidden", "true");
-        bg.tabIndex = -1;
-        bg.controls = false;
+      try { ctx.drawImage(video, dx, dy, dw, dh); } catch {}
+    }
 
-        const v = document.createElement("video");
-        v.className = "foreground";
-        v.setAttribute("playsinline", "");
-        v.loop = true;
-        v.preload = "metadata";
-        v.crossOrigin = "anonymous";
-        v.setAttribute("x-webkit-airplay","allow");
-        v.controls = false;
-        v.muted = true;
+    // Start/stop a light draw loop for the active card only.
+    function startBgCanvasLoop(card) {
+      if (!card || card._bgLoopActive) return;
+      const canvas = card.querySelector(".video-bg-canvas");
+      const video  = card.querySelector("video.foreground");
+      const inner  = card.querySelector(".inner");
+      if (!canvas || !video || !inner) return;
 
-        v.dataset.srcM4S = proxied(m4s(namePascal));
-        v.dataset.srcMP4 = proxied(mp4(namePascal));
-        v.dataset.triedFallback = "0";
+      canvas.style.opacity = "1"; // show immediately
+      card._bgLoopActive = true;
 
-        const spinner = document.createElement("div");
-        spinner.className = "spinner";
+      if (typeof video.requestVideoFrameCallback === "function") {
+        const step = () => {
+          if (!card._bgLoopActive) return;
+          fitAndDrawToCanvas(canvas, video, inner);
+          video.requestVideoFrameCallback(step);
+        };
+        video.requestVideoFrameCallback(step);
+        card._bgLoopCancel = () => { card._bgLoopActive = false; };
+      } else {
+        let lastT = 0;
+        const draw = (t) => {
+          if (!card._bgLoopActive) return;
+          if (t - lastT > 80) { // ~12.5 fps
+            fitAndDrawToCanvas(canvas, video, inner);
+            lastT = t;
+          }
+          card._bgLoopRaf = requestAnimationFrame(draw);
+        };
+        card._bgLoopRaf = requestAnimationFrame(draw);
+        card._bgLoopCancel = () => { card._bgLoopActive = false; cancelAnimationFrame(card._bgLoopRaf); };
+      }
+    }
 
-        const err = document.createElement("div");
-        err.className = "err";
+    function stopBgCanvasLoop(card) {
+      if (card && card._bgLoopCancel) {
+        card._bgLoopCancel();
+        card._bgLoopCancel = null;
+      }
+      if (card) card._bgLoopActive = false;
+    }
 
-        const hideSpinner = () => { spinner.classList.add("hidden"); setTimeout(() => spinner.classList.add("gone"), 220); };
+    /* ===========================
+       DOM
+    ============================ */
+    function cardDOM({ title, namePascal, slugLower }) {
+      const card = document.createElement("section");
+      card.className = "card";
+      card.dataset.slug = slugLower;
+      card.dataset.name = namePascal;
+      card.dataset.title = title || "";
 
-        function tryPlayIfActive(el) {
-          if (el !== activeVideo) return;
-          el.play().catch((e) => {
-            if (e && e.name === "NotAllowedError") { setGlobalMuted(true); el.play().catch(()=>{}); }
-          });
-        }
+      const inner = document.createElement("div");
+      inner.className = "inner";
 
-        function ensurePeekNow() {
-          inner.classList.add("peek");
-          hideSpinner();
-          ensureBgMirror(v, bg);
-        }
+      // Single canvas background
+      const bgCanvas = document.createElement("canvas");
+      bgCanvas.className = "video-bg-canvas";
 
-        v.addEventListener("loadeddata", () => {
-          ensurePeekNow();      // first frame decoded => show fg+bg immediately
-          tryPlayIfActive(v);
-        });
+      const v = document.createElement("video");
+      v.className = "foreground";
+      v.setAttribute("playsinline", "");
+      v.loop = true;
+      v.preload = "metadata";
+      v.crossOrigin = "anonymous";
+      v.setAttribute("x-webkit-airplay","allow");
+      v.controls = false;
+      v.muted = true;
 
-        // If already buffered (revisiting / fast scroll back), peek instantly.
-        setTimeout(() => { if (v.readyState >= 2) ensurePeekNow(); }, 0);
+      v.dataset.srcM4S = proxied(m4s(namePascal));
+      v.dataset.srcMP4 = proxied(mp4(namePascal));
+      v.dataset.triedFallback = "0";
 
-        v.addEventListener("playing", () => { inner.classList.add("show"); });
+      const spinner = document.createElement("div");
+      spinner.className = "spinner";
 
-        v.addEventListener("error", () => {
-          const tried = v.dataset.triedFallback === "1";
-          if (!tried) {
-            v.dataset.triedFallback = "1";
-            limiter(() => {
-              if (!v.src || v.src === v.dataset.srcM4S) {
-                v.src = v.dataset.srcMP4;
-                v.load();
-                tryPlayIfActive(v);
-                retainVideo(v);
-              }
-            });
-          } else {
-            hideSpinner();
-            err.style.display = "grid";
-            err.textContent = "Playback error. Scroll away and back, or try another browser.";
+      const err = document.createElement("div");
+      err.className = "err";
+
+      const hideSpinner = () => { spinner.classList.add("hidden"); setTimeout(() => spinner.classList.add("gone"), 220); };
+
+      function tryPlayIfActive(el) {
+        if (el !== activeVideo) return;
+        el.play().catch((e) => {
+          if (e && e.name === "NotAllowedError") {
+            setGlobalMuted(true);
+            el.play().catch(()=>{});
           }
         });
-
-        inner.appendChild(bg);
-        inner.appendChild(v);
-        inner.appendChild(spinner);
-        inner.appendChild(err);
-        card.appendChild(inner);
-        return { card, video: v };
       }
 
-      /* ===========================
-         Randomization helpers
-      ============================ */
-      function pushToPool(entries) {
-        for (const e of entries) if (!displayedSlugs.has(e.slugLower)) pool.push(e);
+      function ensurePeekNow() {
+        fitAndDrawToCanvas(bgCanvas, v, inner);
+        bgCanvas.style.opacity = "1";
+        inner.classList.add("peek");
+        hideSpinner();
       }
-      function takeRandom(k) {
-        const out = [];
-        for (let i = 0; i < k && pool.length; i++) {
-          const idx = Math.floor(Math.random() * pool.length);
-          out.push(pool.splice(idx, 1)[0]);
+
+      v.addEventListener("loadeddata", () => {
+        ensurePeekNow();
+        tryPlayIfActive(v);
+      });
+
+      // Revisit fast path
+      setTimeout(() => { if (v.readyState >= 2) ensurePeekNow(); }, 0);
+
+      v.addEventListener("playing", () => {
+        startBgCanvasLoop(card);   // animate bg from the fg frames
+        v.style.opacity = "1";
+      });
+
+      v.addEventListener("pause", () => stopBgCanvasLoop(card));
+
+      v.addEventListener("error", () => {
+        const tried = v.dataset.triedFallback === "1";
+        if (!tried) {
+          v.dataset.triedFallback = "1";
+          limiter(() => {
+            if (!v.src || v.src === v.dataset.srcM4S) {
+              v.src = v.dataset.srcMP4;
+              v.load();
+              tryPlayIfActive(v);
+              retainVideo(v);
+            }
+          });
+        } else {
+          hideSpinner();
+          err.style.display = "grid";
+          err.textContent = "Playback error. Scroll away and back, or try another browser.";
         }
-        return out;
+      });
+
+      inner.appendChild(bgCanvas);
+      inner.appendChild(v);
+      inner.appendChild(spinner);
+      inner.appendChild(err);
+      card.appendChild(inner);
+      return { card, video: v };
+    }
+
+    /* ===========================
+       Randomization helpers
+    ============================ */
+    function pushToPool(entries) {
+      for (const e of entries) if (!displayedSlugs.has(e.slugLower)) pool.push(e);
+    }
+    function takeRandom(k) {
+      const out = [];
+      for (let i = 0; i < k && pool.length; i++) {
+        const idx = Math.floor(Math.random() * pool.length);
+        out.push(pool.splice(idx, 1)[0]);
       }
-      function appendEntries(entries) {
+      return out;
+    }
+
+    /* ===========================
+       Observers (declared once, then assigned)
+    ============================ */
+    let moreObserver, prewarmObserver, fullObserver, cullObserver, bootObserver;
+
+    function observeNewCards() {
+      $$(":scope > .card", scroller).forEach(c => {
+        fullObserver.observe(c);
+        cullObserver.observe(c);
+        prewarmObserver.observe(c);
+      });
+    }
+
+    /* ===========================
+       Fetch / paginate
+    ============================ */
+    async function fetchPage() {
+      if (fetching) return;
+      fetching = true;
+      sentinel.textContent = "Loading…";
+      try {
+        const url = FEED_URL + (after ? `&after=${enc(after)}` : "");
+        const res = await fetch(url, { credentials: "omit", mode: "cors", redirect: "follow" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        after = json?.data?.after || null;
+
+        const items = (json?.data?.children || []).map(x => x?.data).filter(Boolean);
+        const pageBatch = [];
+        for (const it of items) {
+          const iframeHTML = it?.secure_media_embed?.content || it?.media_embed?.content || "";
+          const slugLower = iframeSlug(iframeHTML) ||
+            /redgifs\.com\/watch\/([a-z0-9_]+)/i.exec(it?.url_overridden_by_dest || "")?.[1]?.toLowerCase() ||
+            null;
+          if (!slugLower || seenSlugs.has(slugLower)) continue;
+
+          const fromThumb = posterKey(it?.secure_media?.oembed?.thumbnail_url);
+          const namePascal = fromThumb || pascalize(slugLower);
+          if (!namePascal) continue;
+
+          seenSlugs.add(slugLower);
+          pageBatch.push({ title: it.title || "", namePascal, slugLower });
+        }
+
+        pushToPool(pageBatch);
+        const toAppend = takeRandom(pageBatch.length);
+
         const frag = document.createDocumentFragment();
-        for (const entry of entries) {
+        for (const entry of toAppend) {
           displayedSlugs.add(entry.slugLower);
           const { card } = cardDOM(entry);
           frag.appendChild(card);
         }
         scroller.insertBefore(frag, sentinel);
-        // Observe newly added cards
+        observeNewCards();
+
+        sentinel.textContent = after ? "Loading…" : "End of feed.";
+      } catch (e) {
+        sentinel.textContent = "Failed to load feed.";
+        console.error(e);
+      } finally { fetching = false; }
+    }
+
+    /* ===========================
+       Prewarm (attach + buffer + paint first frame before focus)
+    ============================ */
+    function ensureAttached(v, prewarm=false) {
+      if (!v || v.src) return;
+      limiter(() => {
+        v.preload = prewarm ? "auto" : "metadata";
+        v.src = v.dataset.srcM4S;
+        v.load();
+        retainVideo(v);
+      });
+    }
+
+    function ensurePeekForCard(card) {
+      const inner = card.querySelector(".inner");
+      const v = card.querySelector("video.foreground");
+      const bgCanvas = card.querySelector(".video-bg-canvas");
+      if (!inner || !v || !bgCanvas) return;
+      if (v.readyState >= 2) {
+        fitAndDrawToCanvas(bgCanvas, v, inner);
+        bgCanvas.style.opacity = "1";
+        inner.classList.add("peek");
+        const sp = inner.querySelector(".spinner");
+        if (sp && !sp.classList.contains("gone")) { sp.classList.add("hidden"); setTimeout(() => sp.classList.add("gone"), 220); }
+      }
+    }
+
+    /* ===========================
+       Full-focus switching (native-feel)
+    ============================ */
+    function siblingsOf(card) {
+      let prev = card.previousElementSibling, next = card.nextElementSibling;
+      while (prev && !prev.classList.contains("card")) prev = prev.previousElementSibling;
+      while (next && !next.classList.contains("card")) next = next.nextElementSibling;
+      return { prev, next };
+    }
+
+    function activateCard(card) {
+      if (!card) return;
+      const v = $("video.foreground", card);
+      if (activeVideo && activeVideo.closest(".card") === card) return;
+
+      // Pause + hard-mute others AFTER fully focused
+      $$(".card video.foreground").forEach(x => {
+        if (x !== v) {
+          try { x.pause(); } catch {}
+          x.muted = true;
+          stopBgCanvasLoop(x.closest(".card"));
+        }
+      });
+
+      activeVideo = v;
+      headerTitle.textContent = card.dataset.title || "Untitled";
+
+      const { prev, next } = siblingsOf(card);
+
+      ensureAttached(v, /*prewarm=*/false);
+      if (prev) ensureAttached($("video.foreground", prev), /*prewarm=*/true);
+      if (next) ensureAttached($("video.foreground", next), /*prewarm=*/true);
+
+      // First frame visible right away
+      ensurePeekForCard(card);
+
+      applyMuteState();
+
+      v.loop = true;
+      v.play().then(() => {
+        startBgCanvasLoop(card); // animate bg (no flash)
+      }).catch(e => {
+        if (e && e.name === "NotAllowedError") { setGlobalMuted(true); v.play().catch(()=>{}); }
+      });
+
+      retainVideo(v);
+      if (prev) retainVideo($("video.foreground", prev));
+      if (next) retainVideo($("video.foreground", next));
+      evictIfNeeded();
+    }
+
+    /* ===========================
+       Instantiate observers (assign, don't redeclare)
+    ============================ */
+    moreObserver = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting && !fetching) fetchPage();
+    }, { root: scroller, threshold: LOAD_MORE_THRESHOLD });
+    moreObserver.observe(sentinel);
+
+    prewarmObserver = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        const card = e.target;
+        if (e.isIntersecting) {
+          card.classList.add("prewarm");
+          const v = card.querySelector("video.foreground");
+          ensureAttached(v, /*prewarm=*/true);
+          ensurePeekForCard(card);
+        } else {
+          if (activeVideo && card.contains(activeVideo)) continue;
+          card.classList.remove("prewarm");
+          stopBgCanvasLoop(card);
+        }
+      }
+    }, { root: scroller, rootMargin: "200% 0% 200% 0%", threshold: 0.01 });
+
+    const FULL_FOCUS_THRESHOLD_OBS = FULL_FOCUS_THRESHOLD;
+    fullObserver = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting && e.intersectionRatio >= FULL_FOCUS_THRESHOLD_OBS) {
+          if (scrollingActive) pendingCard = e.target; // defer until scrollend
+          else { activateCard(e.target); pendingCard = null; }
+        }
+      }
+    }, { root: scroller, threshold: FULL_FOCUS_THRESHOLD_OBS });
+
+    cullObserver = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) {
+          stopBgCanvasLoop(e.target);
+          const v = e.target.querySelector("video.foreground");
+          if (v) {
+            try { v.pause(); } catch {}
+            v.muted = true;
+            if (v === activeVideo) { activeVideo = null; applyMuteState(); }
+          }
+        }
+      }
+    }, { root: scroller, threshold: 0 });
+
+    bootObserver = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting && e.intersectionRatio >= FULL_FOCUS_THRESHOLD_OBS && !scrollingActive) {
+          activateCard(e.target);
+          bootObserver.disconnect();
+          break;
+        } else if (e.isIntersecting && e.intersectionRatio >= FULL_FOCUS_THRESHOLD_OBS && scrollingActive) {
+          pendingCard = e.target; // defer initial start
+        }
+      }
+    }, { root: scroller, threshold: FULL_FOCUS_THRESHOLD_OBS });
+
+    const bootWait = new MutationObserver(() => {
+      const firstCard = $(".card", scroller);
+      if (firstCard) {
         $$(":scope > .card", scroller).forEach(c => {
           fullObserver.observe(c);
           cullObserver.observe(c);
           prewarmObserver.observe(c);
+          bootObserver.observe(c);
         });
+        bootWait.disconnect();
       }
+    });
+    bootWait.observe(scroller, { childList: true });
 
-      /* ===========================
-         Fetch / paginate
-      ============================ */
-      async function fetchPage() {
-        if (fetching) return;
-        fetching = true;
-        sentinel.textContent = "Loading…";
-        try {
-          const url = FEED_URL + (after ? `&after=${enc(after)}` : "");
-          const res = await fetch(url, { credentials: "omit", mode: "cors", redirect: "follow" });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const json = await res.json();
-          after = json?.data?.after || null;
+    /* ===========================
+       Scroll gating
+    ============================ */
+    let seTimer = null;
+    scroller.addEventListener("scroll", () => {
+      scrollingActive = true;
+      if (seTimer) clearTimeout(seTimer);
+      seTimer = setTimeout(() => scroller.dispatchEvent(new Event("scrollend")), 120);
+    }, { passive: true });
 
-          const items = (json?.data?.children || []).map(x => x?.data).filter(Boolean);
-          const pageBatch = [];
-          for (const it of items) {
-            const iframeHTML = it?.secure_media_embed?.content || it?.media_embed?.content || "";
-            const slugLower = iframeSlug(iframeHTML) ||
-              /redgifs\.com\/watch\/([a-z0-9_]+)/i.exec(it?.url_overridden_by_dest || "")?.[1]?.toLowerCase() ||
-              null;
-            if (!slugLower || seenSlugs.has(slugLower)) continue;
+    function pickFullyVisibleCard() {
+      let best = null;
+      $$(".card", scroller).forEach(card => {
+        const r = card.getBoundingClientRect();
+        const fully = r.top >= 0 && r.bottom <= window.innerHeight + 0.5;
+        if (fully) best = card;
+      });
+      if (best) activateCard(best);
+    }
 
-            const fromThumb = posterKey(it?.secure_media?.oembed?.thumbnail_url);
-            const namePascal = fromThumb || pascalize(slugLower);
-            if (!namePascal) continue;
-
-            seenSlugs.add(slugLower);
-            pageBatch.push({ title: it.title || "", namePascal, slugLower });
-          }
-
-          pushToPool(pageBatch);
-          const toAppend = takeRandom(pageBatch.length);
-          appendEntries(toAppend);
-
-          sentinel.textContent = after ? "Loading…" : "End of feed.";
-        } catch (e) {
-          sentinel.textContent = "Failed to load feed.";
-          console.error(e);
-        } finally { fetching = false; }
-      }
-
-      // Load more when near the end
-      const moreObserver = new IntersectionObserver((entries) => {
-        for (const e of entries) {
-          if (e.isIntersecting && !fetching) fetchPage();
-        }
-      }, { root: scroller, threshold: LOAD_MORE_THRESHOLD });
-      moreObserver.observe(sentinel);
-
-      /* ===========================
-         Prewarm (attach + buffer + paint first frame before focus)
-      ============================ */
-      function ensureAttached(v, prewarm=false) {
-        if (!v || v.src) return;
-        limiter(() => {
-          v.preload = prewarm ? "auto" : "metadata";
-          v.src = v.dataset.srcM4S;
-          v.load();
-          retainVideo(v);
-        });
-      }
-
-      function ensurePeekForCard(card) {
-        const inner = card.querySelector(".inner");
-        const v = card.querySelector("video.foreground");
-        const bg = card.querySelector(".video-bg");
-        if (!inner || !v) return;
-        if (v.readyState >= 2) {
-          inner.classList.add("peek");
-          const sp = inner.querySelector(".spinner");
-          if (sp && !sp.classList.contains("gone")) { sp.classList.add("hidden"); setTimeout(() => sp.classList.add("gone"), 220); }
-          ensureBgMirror(v, bg);
-        }
-      }
-
-      const prewarmObserver = new IntersectionObserver((entries) => {
-        for (const e of entries) {
-          const card = e.target;
-          if (e.isIntersecting) {
-            card.classList.add("prewarm");
-            const v = card.querySelector("video.foreground");
-            ensureAttached(v, /*prewarm=*/true);
-            ensurePeekForCard(card);
-          } else {
-            if (activeVideo && card.contains(activeVideo)) continue;
-            card.classList.remove("prewarm");
-          }
-        }
-      }, { root: scroller, rootMargin: "200% 0% 200% 0%", threshold: 0.01 });
-
-      /* ===========================
-         Full-focus switching (native-feel)
-      ============================ */
-      function siblingsOf(card) {
-        let prev = card.previousElementSibling, next = card.nextElementSibling;
-        while (prev && !prev.classList.contains("card")) prev = prev.previousElementSibling;
-        while (next && !next.classList.contains("card")) next = next.nextElementSibling;
-        return { prev, next };
-      }
-
-      function activateCard(card) {
-        if (!card) return;
-        const v = $("video.foreground", card);
-        if (activeVideo && activeVideo.closest(".card") === card) return;
-
-        // Pause + hard-mute others AFTER fully focused
-        $$(".card video.foreground").forEach(x => { if (x !== v) { try { x.pause(); } catch {} x.muted = true; } });
-
-        activeVideo = v;
-        headerTitle.textContent = card.dataset.title || "Untitled";
-
-        const { prev, next } = siblingsOf(card);
-
-        ensureAttached(v, /*prewarm=*/false);
-        if (prev) ensureAttached($("video.foreground", prev), /*prewarm=*/true);
-        if (next) ensureAttached($("video.foreground", next), /*prewarm=*/true);
-
-        // Make sure both fg and bg are visible immediately if already buffered
-        ensurePeekForCard(card);
-
-        applyMuteState();
-
-        v.loop = true;
-        v.play().catch(e => {
-          if (e && e.name === "NotAllowedError") { setGlobalMuted(true); v.play().catch(()=>{}); }
-        });
-
-        retainVideo(v);
-        if (prev) retainVideo($("video.foreground", prev));
-        if (next) retainVideo($("video.foreground", next));
-        evictIfNeeded();
-      }
-
-      const FULL_FOCUS_THRESHOLD_OBS = FULL_FOCUS_THRESHOLD;
-      const fullObserver = new IntersectionObserver((entries) => {
-        for (const e of entries) {
-          if (e.isIntersecting && e.intersectionRatio >= FULL_FOCUS_THRESHOLD_OBS) {
-            if (scrollingActive) {
-              pendingCard = e.target;     // defer until scrollend
-            } else {
-              activateCard(e.target);
-              pendingCard = null;
-            }
-          }
-        }
-      }, { root: scroller, threshold: FULL_FOCUS_THRESHOLD_OBS });
-
-      // When card leaves viewport: pause + drop "show" only (KEEP .peek for instant visual on revisit)
-      const cullObserver = new IntersectionObserver((entries) => {
-        for (const e of entries) {
-          if (!e.isIntersecting) {
-            const v = e.target.querySelector("video.foreground");
-            const inner = e.target.querySelector(".inner");
-            if (inner) { inner.classList.remove("show"); /* keep .peek for instant frame */ }
-            if (v) {
-              try { v.pause(); } catch {}
-              v.muted = true;
-              if (v === activeVideo) {
-                activeVideo = null;
-                applyMuteState();
-              }
-            }
-          }
-        }
-      }, { root: scroller, threshold: 0 });
-
-      // Scroll gating
-      let seTimer = null;
-      scroller.addEventListener("scroll", () => {
-        scrollingActive = true;
-        if (seTimer) clearTimeout(seTimer);
-        seTimer = setTimeout(() => scroller.dispatchEvent(new Event("scrollend")), 120);
-      }, { passive: true });
-
-      function pickFullyVisibleCard() {
-        let best = null;
-        $$(".card", scroller).forEach(card => {
-          const r = card.getBoundingClientRect();
-          const fully = r.top >= 0 && r.bottom <= window.innerHeight + 0.5;
-          if (fully) best = card;
-        });
-        if (best) activateCard(best);
-      }
-
-      scroller.addEventListener("scrollend", () => {
-        scrollingActive = false;
-        if (pendingCard) {
-          const r = pendingCard.getBoundingClientRect();
-          if (r.top >= 0 && r.bottom <= window.innerHeight + 0.5) {
-            activateCard(pendingCard);
-            pendingCard = null;
-            return;
-          }
+    scroller.addEventListener("scrollend", () => {
+      scrollingActive = false;
+      if (pendingCard) {
+        const r = pendingCard.getBoundingClientRect();
+        if (r.top >= 0 && r.bottom <= window.innerHeight + 0.5) {
+          activateCard(pendingCard);
           pendingCard = null;
+          return;
         }
-        pickFullyVisibleCard();
-      });
+        pendingCard = null;
+      }
+      pickFullyVisibleCard();
+    });
 
-      // Boot observers BEFORE first fetch
-      const bootObserver = new IntersectionObserver((entries) => {
-        for (const e of entries) {
-          if (e.isIntersecting && e.intersectionRatio >= FULL_FOCUS_THRESHOLD_OBS && !scrollingActive) {
-            activateCard(e.target);
-            bootObserver.disconnect();
-            break;
-          } else if (e.isIntersecting && e.intersectionRatio >= FULL_FOCUS_THRESHOLD_OBS && scrollingActive) {
-            pendingCard = e.target; // defer initial start
-          }
-        }
-      }, { root: scroller, threshold: FULL_FOCUS_THRESHOLD_OBS });
-
-      const bootWait = new MutationObserver(() => {
-        const firstCard = $(".card", scroller);
-        if (firstCard) {
-          $$(":scope > .card", scroller).forEach(c => {
-            fullObserver.observe(c);
-            cullObserver.observe(c);
-            prewarmObserver.observe(c);
-            bootObserver.observe(c);
-          });
-          bootWait.disconnect();
-        }
-      });
-      bootWait.observe(scroller, { childList: true });
-
-      /* Start fetching AFTER observers are ready */
-      fetchPage();
-    })();
+    /* Start fetching AFTER observers are ready */
+    fetchPage();
+  })();
   </script>
 </body>
 </html>
