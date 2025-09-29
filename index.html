@@ -1,202 +1,195 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>TikTok-style RedGIFs feed</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <style>
-    :root { color-scheme: dark light; }
-    * { box-sizing: border-box; }
-    html, body {
-      height: 100%;
-      margin: 0;
-      background: #0b0c10;
-      color: #e8f0fe;
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, "Helvetica Neue", Arial;
-      overflow: hidden;
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
-    }
+<meta charset="utf-8" />
+<title>TikTok-style RedGIFs feed (iOS-safe)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<style>
+  :root { color-scheme: dark light; }
+  * { box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: #0b0c10;
+    color: #e8f0fe;
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, "Helvetica Neue", Arial;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
 
-    /* Title overlay — bottom-left */
-    header {
-      position: fixed;
-      left: 12px;
-      bottom: calc(12px + env(safe-area-inset-bottom));
-      z-index: 6;
-      pointer-events: none;
-    }
-    header h1 {
-      margin: 0;
-      padding: 8px 12px;
-      max-width: min(92vw, 680px);
-      font-size: clamp(12px, 2.6vw, 18px);
-      font-weight: 600;
-      letter-spacing: .2px;
-      color: #e8eaff;
-      line-height: 1.25;
-      background: linear-gradient(180deg, rgba(15,18,28,.78), rgba(15,18,28,.58));
-      border: 1px solid rgba(77,89,128,.35);
-      border-radius: 12px;
-      backdrop-filter: blur(6px);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      white-space: normal;
-    }
+  /* Title overlay — bottom-left */
+  header {
+    position: fixed;
+    left: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    z-index: 6;
+    pointer-events: none;
+  }
+  header h1 {
+    margin: 0;
+    padding: 8px 12px;
+    max-width: min(92vw, 680px);
+    font-size: clamp(12px, 2.6vw, 18px);
+    font-weight: 600;
+    letter-spacing: .2px;
+    color: #e8eaff;
+    line-height: 1.25;
+    background: linear-gradient(180deg, rgba(15,18,28,.78), rgba(15,18,28,.58));
+    border: 1px solid rgba(77,89,128,.35);
+    border-radius: 12px;
+    backdrop-filter: blur(6px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    white-space: normal;
+  }
 
-    .global-controls {
-      position: fixed;
-      right: 12px;
-      bottom: calc(16px + env(safe-area-inset-bottom));
-      display: flex;
-      gap: 8px;
-      z-index: 10;
-      pointer-events: auto;
-    }
-    .btn {
-      appearance: none;
-      border: 1px solid rgba(99,102,241,.5);
-      background: rgba(31,41,55,.6);
-      color: #e8f0fe;
-      padding: 8px 12px;
-      border-radius: 999px;
-      cursor: pointer;
-      font-size: 12px;
-      backdrop-filter: blur(6px);
-      -webkit-tap-highlight-color: transparent;
-      touch-action: manipulation;
-    }
-    .btn:hover { background: rgba(31,41,55,.8); }
+  .global-controls {
+    position: fixed;
+    right: 12px;
+    bottom: calc(16px + env(safe-area-inset-bottom));
+    display: flex;
+    gap: 8px;
+    z-index: 10;
+    pointer-events: auto;
+  }
+  .btn {
+    appearance: none;
+    border: 1px solid rgba(99,102,241,.5);
+    background: rgba(31,41,55,.6);
+    color: #e8f0fe;
+    padding: 8px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 12px;
+    backdrop-filter: blur(6px);
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  .btn:hover { background: rgba(31,41,55,.8); }
 
-    .scroller {
-      position: fixed;
-      inset: 0;
-      overflow-y: auto;
-      overscroll-behavior-y: contain;
-      -webkit-overflow-scrolling: touch;
-      scroll-snap-type: y mandatory;
-      scroll-padding-top: 0;
-      touch-action: pan-y;
-      scrollbar-width: none;
-    }
-    .scroller::-webkit-scrollbar { display: none; }
+  /* The snapping scroller */
+  .scroller {
+    position: fixed;
+    inset: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    scroll-snap-type: y mandatory;        /* keep snap */
+    /* IMPORTANT for iOS stability: let snap stop be normal (default). */
+    scrollbar-width: none;
+    touch-action: pan-y;
+  }
+  .scroller::-webkit-scrollbar { display: none; }
 
-    .card {
-      position: relative;
-      width: 100vw;
-      height: 100dvh;
-      height: 100vh;  /* fallback */
-      scroll-snap-align: start;
-      scroll-snap-stop: always;
-      display: grid;
-      place-items: center;
-      background: #000;
-      border-bottom: 1px solid #12151f;
-      user-select: none;
-      content-visibility: auto;
-      contain: layout style paint;
-      contain-intrinsic-size: 100vh;
-    }
-    .card.prewarm { content-visibility: visible; }
+  .card {
+    position: relative;
+    width: 100vw;
+    height: 100dvh;
+    height: 100vh;  /* fallback */
+    scroll-snap-align: start;
+    display: grid;
+    place-items: center;
+    background: #000;
+    border-bottom: 1px solid #12151f;
+    user-select: none;
+    content-visibility: auto;
+    contain: layout style paint;
+    contain-intrinsic-size: 100vh;
+  }
 
-    .inner {
-      position: relative;
-      width: 100vw;
-      height: 100%;
-      display: grid;
-      place-items: center;
-      background: #000;
-      overflow: hidden;
-    }
+  .inner {
+    position: relative;
+    width: 100vw;
+    height: 100%;
+    display: grid;
+    place-items: center;
+    background: #000;
+    overflow: hidden;
+  }
 
-    /* Foreground video — always fully contained (no crop) */
-    .inner > video.foreground {
-      position: relative;
-      z-index: 2;
-      width: 100%;
-      height: 100%;
-      max-width: 100vw;
-      max-height: 100dvh;
-      object-fit: contain;
-      display: block;
-      background: transparent;
-      opacity: 0;
-      transition: opacity 260ms ease;
-    }
+  /* Foreground video — fully contained (no crop) */
+  .inner > video.foreground {
+    position: relative;
+    z-index: 2;
+    width: 100%;
+    height: 100%;
+    max-width: 100vw;
+    max-height: 100dvh;
+    object-fit: contain;
+    display: block;
+    background: transparent;
+    opacity: 0;
+    transition: opacity 220ms ease;
+  }
 
-    /* Canvas blurred background (no transitions → no flash) */
-    .video-bg-canvas {
-      position: absolute;
-      inset: 0;
-      z-index: 1;
-      pointer-events: none;
-      width: 100%;
-      height: 100%;
-      filter: blur(5px);
-      transform: scale(1.06);
-      opacity: 0; /* becomes 1 once a frame is drawn */
-    }
+  /* Background canvas (blurred) */
+  .video-bg-canvas {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    width: 100%;
+    height: 100%;
+    filter: blur(5px);
+    transform: scale(1.06);
+    opacity: 0; /* becomes 1 once a frame is drawn */
+  }
 
-    /* First frame visible during approach and revisits */
-    .inner.peek .foreground,
-    .inner.peek .video-bg-canvas { opacity: 1; }
+  .spinner, .err {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+    z-index: 3;
+    transition: opacity 200ms ease;
+  }
+  .spinner:before {
+    content: "";
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    border: 3px solid rgba(255,255,255,.15);
+    border-top-color: rgba(255,255,255,.85);
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .err {
+    padding: 12px;
+    color: #ffd7d7;
+    background: linear-gradient(180deg, rgba(42,13,13,.7), rgba(42,13,13,.2));
+    border-top: 1px solid #5b1b1b;
+    border-bottom: 1px solid #5b1b1b;
+    font-size: 13px;
+    text-align: center;
+    display: none;
+  }
+  .spinner.hidden { opacity: 0; }
+  .spinner.gone  { display: none; }
 
-    .spinner, .err {
-      position: absolute;
-      inset: 0;
-      display: grid;
-      place-items: center;
-      pointer-events: none;
-      z-index: 3;
-      transition: opacity 200ms ease;
-    }
-    .spinner:before {
-      content: "";
-      width: 38px;
-      height: 38px;
-      border-radius: 50%;
-      border: 3px solid rgba(255,255,255,.15);
-      border-top-color: rgba(255,255,255,.85);
-      animation: spin 1s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .err {
-      padding: 12px;
-      color: #ffd7d7;
-      background: linear-gradient(180deg, rgba(42,13,13,.7), rgba(42,13,13,.2));
-      border-top: 1px solid #5b1b1b;
-      border-bottom: 1px solid #5b1b1b;
-      font-size: 13px;
-      text-align: center;
-      display: none;
-      z-index: 3;
-    }
-    .spinner.hidden { opacity: 0; }
-    .spinner.gone  { display: none; }
+  .end {
+    height: 40vh;
+    display: grid;
+    place-items: center;
+    color: #9ca3af;
+    font-size: 13px;
+  }
 
-    .end {
-      height: 40vh;
-      display: grid;
-      place-items: center;
-      color: #9ca3af;
-      font-size: 13px;
-      scroll-snap-align: none;
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      .inner > video.foreground,
-      .spinner { transition: none !important; }
-    }
-  </style>
+  @media (prefers-reduced-motion: reduce) {
+    .inner > video.foreground,
+    .spinner { transition: none !important; }
+  }
+</style>
 </head>
 <body>
-  <!-- Title overlay at bottom-left -->
   <header><h1 id="headerTitle">Loading…</h1></header>
 
   <main id="scroller" class="scroller" aria-label="TikTok-style video feed">
+    <div id="content"></div>
     <div id="sentinel" class="end">Loading…</div>
   </main>
 
@@ -204,547 +197,374 @@
     <button id="muteBtn" class="btn" type="button">Unmute</button>
   </div>
 
-  <script>
-  (function () {
-    "use strict";
+<script>
+(() => {
+  "use strict";
 
-    /* ===========================
-       Config
-    ============================ */
-    const MULTI = "BiggerThanYouThought+TikTokNSFW";
-    const FEED_URL = "https://www.reddit.com/r/" + encodeURIComponent(MULTI) + "/.json?raw_json=1";
-    const PROXY = "https://api.codetabs.com/v1/proxy?quest=";
-    const RATE_LIMIT_PER_SEC = 5;
-    const CACHE_CAP = 8;
-    const FULL_FOCUS_THRESHOLD = 0.999;
-    const LOAD_MORE_THRESHOLD = 0.12;
+  /* ===========================
+     Config
+  ============================ */
+  const MULTI = "BiggerThanYouThought+TikTokNSFW";
+  const FEED_URL = "https://www.reddit.com/r/" + encodeURIComponent(MULTI) + "/.json?raw_json=1";
+  const PROXY = "https://api.codetabs.com/v1/proxy?quest=";
 
-    /* ===========================
-       Helpers
-    ============================ */
-    const $  = (sel, el = document) => el.querySelector(sel);
-    const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
-    const enc = encodeURIComponent;
+  const RATE_LIMIT_PER_SEC = 5;     // media start limiter
+  const CACHE_CAP = 8;              // attached <video> cap
+  const LOAD_MORE_GAP = 3;          // when within 3 from end → load more
 
-    // Proxy limiter for media starts (<=5/s)
-    const limiter = (() => {
-      let tokens = RATE_LIMIT_PER_SEC;
-      const q = [];
-      setInterval(() => {
-        tokens = Math.min(RATE_LIMIT_PER_SEC, tokens + RATE_LIMIT_PER_SEC);
-        while (tokens > 0 && q.length) { tokens--; q.shift()(); }
-      }, 1000);
-      return (fn) => { tokens > 0 ? (tokens--, fn()) : q.push(fn); };
-    })();
+  /* ===========================
+     Small helpers
+  ============================ */
+  const $  = (sel, el = document) => el.querySelector(sel);
+  const enc = encodeURIComponent;
+  const m4s = (n) => `https://media.redgifs.com/${n}-mobile.m4s`;
+  const mp4 = (n) => `https://media.redgifs.com/${n}-mobile.mp4`;
+  const proxied = (url) => PROXY + enc(url);
+  const pascalize = (slug) => slug ? (slug[0].toUpperCase() + slug.slice(1)) : null;
+  const iframeSlug= (html) => /redgifs\.com\/ifr\/([a-z0-9_]+)/i.exec(html || "")?.[1]?.toLowerCase() || null;
+  const posterKey = (thumbUrl) => /media\.redgifs\.com\/([^\/?#]+)-poster/i.exec(thumbUrl || "")?.[1] || null;
 
-    const proxied   = (url) => PROXY + enc(url);
-    const posterKey = (thumbUrl) => /media\.redgifs\.com\/([^\/?#]+)-poster/i.exec(thumbUrl || "")?.[1] || null;
-    const pascalize = (slug) => slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : null;
-    const iframeSlug= (html) => /redgifs\.com\/ifr\/([a-z0-9_]+)/i.exec(html || "")?.[1]?.toLowerCase() || null;
+  // Simple token bucket limiter (<= RATE_LIMIT_PER_SEC)
+  const limiter = (() => {
+    let tokens = RATE_LIMIT_PER_SEC;
+    const q = [];
+    setInterval(() => {
+      tokens = Math.min(RATE_LIMIT_PER_SEC, tokens + RATE_LIMIT_PER_SEC);
+      while (tokens > 0 && q.length) { tokens--; q.shift()(); }
+    }, 1000);
+    return (fn) => { tokens > 0 ? (tokens--, fn()) : q.push(fn); };
+  })();
 
-    const m4s = (n) => `https://media.redgifs.com/${n}-mobile.m4s`;
-    const mp4 = (n) => `https://media.redgifs.com/${n}-mobile.mp4`;
+  /* ===========================
+     State
+  ============================ */
+  const scroller = $("#scroller");
+  const content  = $("#content");
+  const sentinel = $("#sentinel");
+  const headerTitle = $("#headerTitle");
+  const muteBtn = $("#muteBtn");
 
-    /* ===========================
-       State
-    ============================ */
-    const scroller     = $("#scroller");
-    const sentinel     = $("#sentinel");
-    const muteBtn      = $("#muteBtn");
-    const headerTitle  = $("#headerTitle");
+  let after = null;          // reddit pagination
+  let fetching = false;
 
-    let after = null;
-    let fetching = false;
+  let globalMuted = JSON.parse(localStorage.getItem("globalMuted") ?? "true");
+  let activeIndex = -1;      // index in .card list
+  const retained = [];       // LRU list of <video> for eviction
+  const seenSlugs = new Set();
+  const displayed = [];      // {title, namePascal, slugLower}
 
-    // Playback
-    let activeVideo = null;
-    let globalMuted = JSON.parse(localStorage.getItem("globalMuted") ?? "true");
+  /* ===========================
+     Utilities
+  ============================ */
+  function cards() { return [...content.querySelectorAll(".card")]; }
+  function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+  function viewportH() { return window.visualViewport ? window.visualViewport.height : window.innerHeight; }
 
-    // Scroll gating: don't switch mid-fling
-    let scrollingActive = false;
-    let pendingCard = null;
-
-    // Randomization + de-dupe
-    const pool = [];
-    const seenSlugs = new Set();
-    const displayedSlugs = new Set();
-
-    // Cache of attached videos
-    const retained = [];
-
-    function retainVideo(v) {
-      const i = retained.indexOf(v);
-      if (i !== -1) retained.splice(i, 1);
-      retained.push(v);
-      evictIfNeeded();
+  function retainVideo(v) {
+    const i = retained.indexOf(v);
+    if (i !== -1) retained.splice(i, 1);
+    retained.push(v);
+    evictIfNeeded();
+  }
+  function evictIfNeeded() {
+    const keep = new Set();
+    const cs = cards();
+    if (activeIndex >= 0) {
+      const v = cs[activeIndex]?.querySelector("video.foreground");
+      if (v) keep.add(v);
+      const prev = cs[activeIndex - 1]?.querySelector("video.foreground");
+      const next = cs[activeIndex + 1]?.querySelector("video.foreground");
+      if (prev) keep.add(prev);
+      if (next) keep.add(next);
     }
-    function evictIfNeeded() {
-      const keep = new Set();
-      if (activeVideo) {
-        keep.add(activeVideo);
-        const { prev, next } = siblingsOf(activeVideo.closest(".card"));
-        if (prev) keep.add($("video.foreground", prev));
-        if (next) keep.add($("video.foreground", next));
-      }
-      while (retained.length > CACHE_CAP) {
-        const cand = retained[0];
-        if (keep.has(cand)) { retained.shift(); retained.push(cand); continue; }
-        try { cand.pause(); } catch {}
-        if (cand.src) { cand.removeAttribute("src"); cand.load(); }
-        retained.shift();
-      }
+    while (retained.length > CACHE_CAP) {
+      const v = retained[0];
+      if (keep.has(v)) { retained.shift(); retained.push(v); continue; }
+      try { v.pause(); } catch {}
+      if (v.src) { v.removeAttribute("src"); v.load(); }
+      retained.shift();
     }
+  }
 
-    function applyMuteState() {
-      $$(".card video.foreground").forEach(v => { v.muted = (v !== activeVideo) || globalMuted; });
-      muteBtn.textContent = globalMuted ? "Unmute" : "Mute";
-    }
-    function setGlobalMuted(v) {
-      const wantMuted = !!v;
-      globalMuted = wantMuted;
-      localStorage.setItem("globalMuted", JSON.stringify(globalMuted));
-      applyMuteState();
-
-      // On unmute (Firefox-friendly): pause → unmute → play inside the click gesture
-      if (!globalMuted && activeVideo) {
-        try { activeVideo.pause(); } catch {}
-        activeVideo.muted = false;
-        activeVideo.volume = 1.0;
-        activeVideo.play().catch(()=>{});
+  function setGlobalMuted(m) {
+    globalMuted = !!m;
+    localStorage.setItem("globalMuted", JSON.stringify(globalMuted));
+    applyMuteState();
+    if (!globalMuted) {
+      const v = cards()[activeIndex]?.querySelector("video.foreground");
+      if (v) {
+        try { v.pause(); } catch {}
+        v.muted = false; v.volume = 1.0;
+        v.play().catch(()=>{});
       }
     }
-    muteBtn.addEventListener("click", () => setGlobalMuted(!globalMuted));
+  }
+  function applyMuteState() {
+    cards().forEach((c,i) => {
+      const v = c.querySelector("video.foreground");
+      if (!v) return;
+      v.muted = (i !== activeIndex) || globalMuted;
+    });
+    muteBtn.textContent = globalMuted ? "Unmute" : "Mute";
+  }
+  muteBtn.addEventListener("click", () => setGlobalMuted(!globalMuted));
+  applyMuteState();
+
+  /* ===========================
+     Canvas background (only for active)
+  ============================ */
+  function fitAndDrawToCanvas(canvas, video, container) {
+    if (!canvas || !video || video.readyState < 2) return;
+    const cw = container.clientWidth || window.innerWidth;
+    const ch = container.clientHeight || viewportH();
+    if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
+    const vw = video.videoWidth || 16;
+    const vh = video.videoHeight || 9;
+    const ctx = canvas.getContext("2d"); if (!ctx) return;
+
+    const contAR = cw / ch, vidAR = vw / vh;
+    let dw, dh, dx, dy;
+    if (contAR > vidAR) { dw = cw; dh = Math.round(cw / vidAR); dx = 0; dy = Math.round((ch - dh)/2); }
+    else { dh = ch; dw = Math.round(ch * vidAR); dx = Math.round((cw - dw)/2); dy = 0; }
+
+    try { ctx.drawImage(video, dx, dy, dw, dh); } catch {}
+  }
+
+  let bgLoopCancel = null;
+  function startBgLoop(card) {
+    stopBgLoop();
+    const canvas = card.querySelector(".video-bg-canvas");
+    const video  = card.querySelector("video.foreground");
+    const inner  = card.querySelector(".inner");
+    if (!canvas || !video || !inner) return;
+    canvas.style.opacity = "1";
+
+    if (typeof video.requestVideoFrameCallback === "function") {
+      const step = () => { fitAndDrawToCanvas(canvas, video, inner); video.requestVideoFrameCallback(step); };
+      video.requestVideoFrameCallback(step);
+      bgLoopCancel = () => { bgLoopCancel = null; /* nothing to cancel for rVFC */ };
+    } else {
+      let last = 0, rafId = 0;
+      const draw = (t) => {
+        if (t - last > 80) { fitAndDrawToCanvas(canvas, video, inner); last = t; }
+        rafId = requestAnimationFrame(draw);
+      };
+      rafId = requestAnimationFrame(draw);
+      bgLoopCancel = () => { cancelAnimationFrame(rafId); bgLoopCancel = null; };
+    }
+  }
+  function stopBgLoop() { if (bgLoopCancel) bgLoopCancel(); }
+
+  /* ===========================
+     DOM builders
+  ============================ */
+  function buildCard({ title, namePascal, slugLower }) {
+    const card = document.createElement("section");
+    card.className = "card";
+    card.dataset.slug = slugLower;
+    card.dataset.title = title || "";
+
+    const inner = document.createElement("div");
+    inner.className = "inner";
+
+    const bgCanvas = document.createElement("canvas");
+    bgCanvas.className = "video-bg-canvas";
+
+    const v = document.createElement("video");
+    v.className = "foreground";
+    v.setAttribute("playsinline", "");
+    v.loop = true;
+    v.preload = "metadata";
+    v.crossOrigin = "anonymous";
+    v.setAttribute("x-webkit-airplay","allow");
+    v.controls = false;
+    v.muted = true;
+
+    v.dataset.srcM4S = proxied(m4s(namePascal));
+    v.dataset.srcMP4 = proxied(mp4(namePascal));
+    v.dataset.triedFallback = "0";
+
+    const spinner = document.createElement("div");
+    spinner.className = "spinner";
+
+    const err = document.createElement("div");
+    err.className = "err";
+
+    function hideSpinner() { spinner.classList.add("hidden"); setTimeout(() => spinner.classList.add("gone"), 200); }
+
+    v.addEventListener("loadeddata", () => {
+      // paint a first frame so the card isn't black during momentum scroll
+      fitAndDrawToCanvas(bgCanvas, v, inner);
+      bgCanvas.style.opacity = "1";
+      hideSpinner();
+      if (cards()[activeIndex]?.contains(v)) {
+        v.play().catch(e => { if (e?.name === "NotAllowedError") setGlobalMuted(true); });
+      }
+    });
+
+    v.addEventListener("playing", () => { v.style.opacity = "1"; if (cards()[activeIndex]?.contains(v)) startBgLoop(card); });
+    v.addEventListener("pause", () => { if (cards()[activeIndex]?.contains(v)) stopBgLoop(); });
+
+    v.addEventListener("error", () => {
+      const tried = v.dataset.triedFallback === "1";
+      if (!tried) {
+        v.dataset.triedFallback = "1";
+        limiter(() => { v.src = v.dataset.srcMP4; v.load(); retainVideo(v); });
+      } else {
+        hideSpinner();
+        err.style.display = "grid";
+        err.textContent = "Playback error. Try another browser.";
+      }
+    });
+
+    inner.appendChild(bgCanvas);
+    inner.appendChild(v);
+    inner.appendChild(spinner);
+    inner.appendChild(err);
+    card.appendChild(inner);
+    return card;
+  }
+
+  function ensureAttached(v, eager=false) {
+    if (!v || v.src) return;
+    limiter(() => {
+      v.preload = eager ? "auto" : "metadata";
+      v.src = v.dataset.srcM4S;
+      v.load();
+      retainVideo(v);
+    });
+  }
+
+  /* ===========================
+     Fetch / paginate (no observers)
+  ============================ */
+  async function fetchPage() {
+    if (fetching) return;
+    fetching = true;
+    sentinel.textContent = "Loading…";
+    try {
+      const url = FEED_URL + (after ? `&after=${enc(after)}` : "");
+      const res = await fetch(url, { credentials: "omit", mode: "cors", redirect: "follow" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      after = json?.data?.after || null;
+
+      const items = (json?.data?.children || []).map(x => x?.data).filter(Boolean);
+      for (const it of items) {
+        const iframeHTML = it?.secure_media_embed?.content || it?.media_embed?.content || "";
+        const slugLower = iframeSlug(iframeHTML) ||
+          /redgifs\.com\/watch\/([a-z0-9_]+)/i.exec(it?.url_overridden_by_dest || "")?.[1]?.toLowerCase() ||
+          null;
+        if (!slugLower || seenSlugs.has(slugLower)) continue;
+
+        const fromThumb = posterKey(it?.secure_media?.oembed?.thumbnail_url);
+        const namePascal = fromThumb || pascalize(slugLower);
+        if (!namePascal) continue;
+
+        seenSlugs.add(slugLower);
+        displayed.push({ title: it.title || "", namePascal, slugLower });
+      }
+
+      // Randomize order of the new batch for variety
+      for (let i = displayed.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [displayed[i], displayed[j]] = [displayed[j], displayed[i]];
+      }
+
+      // Append any not-yet-rendered
+      const existing = cards().length;
+      const frag = document.createDocumentFragment();
+      for (let i = existing; i < displayed.length; i++) {
+        frag.appendChild(buildCard(displayed[i]));
+      }
+      content.appendChild(frag);
+
+      sentinel.textContent = after ? "Loading…" : "End of feed.";
+    } catch (e) {
+      console.error(e);
+      sentinel.textContent = "Failed to load feed.";
+    } finally {
+      fetching = false;
+    }
+  }
+
+  /* ===========================
+     Activation logic (no IO, no tug-of-war)
+  ============================ */
+  function indexFromScroll() {
+    const h = viewportH();
+    const idx = Math.round(scroller.scrollTop / h);
+    return clamp(idx, 0, cards().length - 1);
+  }
+
+  function activate(idx) {
+    const cs = cards();
+    if (!cs.length) return;
+    idx = clamp(idx, 0, cs.length - 1);
+    if (idx === activeIndex) return;
+
+    // Pause others & stop bg loop
+    cs.forEach((c,i) => {
+      const v = c.querySelector("video.foreground");
+      if (!v) return;
+      if (i !== idx) { try { v.pause(); } catch {} v.muted = true; }
+    });
+    stopBgLoop();
+
+    // Update title
+    headerTitle.textContent = cs[idx].dataset.title || "Untitled";
+
+    // Attach current + neighbors
+    const vNow  = cs[idx]?.querySelector("video.foreground");
+    const vPrev = cs[idx-1]?.querySelector("video.foreground");
+    const vNext = cs[idx+1]?.querySelector("video.foreground");
+    ensureAttached(vNow, /*eager*/false);
+    ensureAttached(vPrev, /*eager*/true);
+    ensureAttached(vNext, /*eager*/true);
+
+    activeIndex = idx;
     applyMuteState();
 
-    /* ===========================
-       Canvas background (no flash)
-    ============================ */
-    function fitAndDrawToCanvas(canvas, video, container) {
-      if (!canvas || !video || video.readyState < 2) return;
-      const cw = container.clientWidth || window.innerWidth;
-      const ch = container.clientHeight || window.innerHeight;
-      if (canvas.width !== cw || canvas.height !== ch) {
-        canvas.width = cw; canvas.height = ch;
-      }
-      const vw = video.videoWidth || 16;
-      const vh = video.videoHeight || 9;
-      const ctx = canvas.getContext("2d"); if (!ctx) return;
-
-      const contAR = cw / ch, vidAR = vw / vh;
-      let dw, dh, dx, dy;
-      if (contAR > vidAR) { dw = cw; dh = Math.round(cw / vidAR); dx = 0; dy = Math.round((ch - dh)/2); }
-      else { dh = ch; dw = Math.round(ch * vidAR); dx = Math.round((cw - dw)/2); dy = 0; }
-
-      try { ctx.drawImage(video, dx, dy, dw, dh); } catch {}
-    }
-
-    // Start/stop a light draw loop for the active card only.
-    function startBgCanvasLoop(card) {
-      if (!card || card._bgLoopActive) return;
-      const canvas = card.querySelector(".video-bg-canvas");
-      const video  = card.querySelector("video.foreground");
-      const inner  = card.querySelector(".inner");
-      if (!canvas || !video || !inner) return;
-
-      canvas.style.opacity = "1"; // show immediately
-      card._bgLoopActive = true;
-
-      if (typeof video.requestVideoFrameCallback === "function") {
-        const step = () => {
-          if (!card._bgLoopActive) return;
-          fitAndDrawToCanvas(canvas, video, inner);
-          video.requestVideoFrameCallback(step);
-        };
-        video.requestVideoFrameCallback(step);
-        card._bgLoopCancel = () => { card._bgLoopActive = false; };
-      } else {
-        let lastT = 0;
-        const draw = (t) => {
-          if (!card._bgLoopActive) return;
-          if (t - lastT > 80) { // ~12.5 fps
-            fitAndDrawToCanvas(canvas, video, inner);
-            lastT = t;
-          }
-          card._bgLoopRaf = requestAnimationFrame(draw);
-        };
-        card._bgLoopRaf = requestAnimationFrame(draw);
-        card._bgLoopCancel = () => { card._bgLoopActive = false; cancelAnimationFrame(card._bgLoopRaf); };
-      }
-    }
-
-    function stopBgCanvasLoop(card) {
-      if (card && card._bgLoopCancel) {
-        card._bgLoopCancel();
-        card._bgLoopCancel = null;
-      }
-      if (card) card._bgLoopActive = false;
-    }
-
-    /* ===========================
-       DOM
-    ============================ */
-    function cardDOM({ title, namePascal, slugLower }) {
-      const card = document.createElement("section");
-      card.className = "card";
-      card.dataset.slug = slugLower;
-      card.dataset.name = namePascal;
-      card.dataset.title = title || "";
-
-      const inner = document.createElement("div");
-      inner.className = "inner";
-
-      // Single canvas background
-      const bgCanvas = document.createElement("canvas");
-      bgCanvas.className = "video-bg-canvas";
-
-      const v = document.createElement("video");
-      v.className = "foreground";
-      v.setAttribute("playsinline", "");
-      v.loop = true;
-      v.preload = "metadata";
-      v.crossOrigin = "anonymous";
-      v.setAttribute("x-webkit-airplay","allow");
-      v.controls = false;
-      v.muted = true;
-
-      v.dataset.srcM4S = proxied(m4s(namePascal));
-      v.dataset.srcMP4 = proxied(mp4(namePascal));
-      v.dataset.triedFallback = "0";
-
-      const spinner = document.createElement("div");
-      spinner.className = "spinner";
-
-      const err = document.createElement("div");
-      err.className = "err";
-
-      const hideSpinner = () => { spinner.classList.add("hidden"); setTimeout(() => spinner.classList.add("gone"), 220); };
-
-      function tryPlayIfActive(el) {
-        if (el !== activeVideo) return;
-        el.play().catch((e) => {
-          if (e && e.name === "NotAllowedError") {
-            setGlobalMuted(true);
-            el.play().catch(()=>{});
-          }
-        });
-      }
-
-      function ensurePeekNow() {
-        fitAndDrawToCanvas(bgCanvas, v, inner);
-        bgCanvas.style.opacity = "1";
-        inner.classList.add("peek");
-        hideSpinner();
-      }
-
-      v.addEventListener("loadeddata", () => {
-        ensurePeekNow();
-        tryPlayIfActive(v);
-      });
-
-      // Revisit fast path
-      setTimeout(() => { if (v.readyState >= 2) ensurePeekNow(); }, 0);
-
-      v.addEventListener("playing", () => {
-        startBgCanvasLoop(card);   // animate bg from the fg frames
-        v.style.opacity = "1";
-      });
-
-      v.addEventListener("pause", () => stopBgCanvasLoop(card));
-
-      v.addEventListener("error", () => {
-        const tried = v.dataset.triedFallback === "1";
-        if (!tried) {
-          v.dataset.triedFallback = "1";
-          limiter(() => {
-            if (!v.src || v.src === v.dataset.srcM4S) {
-              v.src = v.dataset.srcMP4;
-              v.load();
-              tryPlayIfActive(v);
-              retainVideo(v);
-            }
-          });
-        } else {
-          hideSpinner();
-          err.style.display = "grid";
-          err.textContent = "Playback error. Scroll away and back, or try another browser.";
-        }
-      });
-
-      inner.appendChild(bgCanvas);
-      inner.appendChild(v);
-      inner.appendChild(spinner);
-      inner.appendChild(err);
-      card.appendChild(inner);
-      return { card, video: v };
-    }
-
-    /* ===========================
-       Randomization helpers
-    ============================ */
-    function pushToPool(entries) {
-      for (const e of entries) if (!displayedSlugs.has(e.slugLower)) pool.push(e);
-    }
-    function takeRandom(k) {
-      const out = [];
-      for (let i = 0; i < k && pool.length; i++) {
-        const idx = Math.floor(Math.random() * pool.length);
-        out.push(pool.splice(idx, 1)[0]);
-      }
-      return out;
-    }
-
-    /* ===========================
-       Observers (declared once, then assigned)
-    ============================ */
-    let moreObserver, prewarmObserver, fullObserver, cullObserver, bootObserver;
-
-    function observeNewCards() {
-      $$(":scope > .card", scroller).forEach(c => {
-        fullObserver.observe(c);
-        cullObserver.observe(c);
-        prewarmObserver.observe(c);
-      });
-    }
-
-    /* ===========================
-       Fetch / paginate
-    ============================ */
-    async function fetchPage() {
-      if (fetching) return;
-      fetching = true;
-      sentinel.textContent = "Loading…";
-      try {
-        const url = FEED_URL + (after ? `&after=${enc(after)}` : "");
-        const res = await fetch(url, { credentials: "omit", mode: "cors", redirect: "follow" });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json = await res.json();
-        after = json?.data?.after || null;
-
-        const items = (json?.data?.children || []).map(x => x?.data).filter(Boolean);
-        const pageBatch = [];
-        for (const it of items) {
-          const iframeHTML = it?.secure_media_embed?.content || it?.media_embed?.content || "";
-          const slugLower = iframeSlug(iframeHTML) ||
-            /redgifs\.com\/watch\/([a-z0-9_]+)/i.exec(it?.url_overridden_by_dest || "")?.[1]?.toLowerCase() ||
-            null;
-          if (!slugLower || seenSlugs.has(slugLower)) continue;
-
-          const fromThumb = posterKey(it?.secure_media?.oembed?.thumbnail_url);
-          const namePascal = fromThumb || pascalize(slugLower);
-          if (!namePascal) continue;
-
-          seenSlugs.add(slugLower);
-          pageBatch.push({ title: it.title || "", namePascal, slugLower });
-        }
-
-        pushToPool(pageBatch);
-        const toAppend = takeRandom(pageBatch.length);
-
-        const frag = document.createDocumentFragment();
-        for (const entry of toAppend) {
-          displayedSlugs.add(entry.slugLower);
-          const { card } = cardDOM(entry);
-          frag.appendChild(card);
-        }
-        scroller.insertBefore(frag, sentinel);
-        observeNewCards();
-
-        sentinel.textContent = after ? "Loading…" : "End of feed.";
-      } catch (e) {
-        sentinel.textContent = "Failed to load feed.";
-        console.error(e);
-      } finally { fetching = false; }
-    }
-
-    /* ===========================
-       Prewarm (attach + buffer + paint first frame before focus)
-    ============================ */
-    function ensureAttached(v, prewarm=false) {
-      if (!v || v.src) return;
-      limiter(() => {
-        v.preload = prewarm ? "auto" : "metadata";
-        v.src = v.dataset.srcM4S;
-        v.load();
-        retainVideo(v);
-      });
-    }
-
-    function ensurePeekForCard(card) {
-      const inner = card.querySelector(".inner");
-      const v = card.querySelector("video.foreground");
-      const bgCanvas = card.querySelector(".video-bg-canvas");
-      if (!inner || !v || !bgCanvas) return;
-      if (v.readyState >= 2) {
-        fitAndDrawToCanvas(bgCanvas, v, inner);
-        bgCanvas.style.opacity = "1";
-        inner.classList.add("peek");
-        const sp = inner.querySelector(".spinner");
-        if (sp && !sp.classList.contains("gone")) { sp.classList.add("hidden"); setTimeout(() => sp.classList.add("gone"), 220); }
-      }
-    }
-
-    /* ===========================
-       Full-focus switching (native-feel)
-    ============================ */
-    function siblingsOf(card) {
-      let prev = card.previousElementSibling, next = card.nextElementSibling;
-      while (prev && !prev.classList.contains("card")) prev = prev.previousElementSibling;
-      while (next && !next.classList.contains("card")) next = next.nextElementSibling;
-      return { prev, next };
-    }
-
-    function activateCard(card) {
-      if (!card) return;
-      const v = $("video.foreground", card);
-      if (activeVideo && activeVideo.closest(".card") === card) return;
-
-      // Pause + hard-mute others AFTER fully focused
-      $$(".card video.foreground").forEach(x => {
-        if (x !== v) {
-          try { x.pause(); } catch {}
-          x.muted = true;
-          stopBgCanvasLoop(x.closest(".card"));
-        }
-      });
-
-      activeVideo = v;
-      headerTitle.textContent = card.dataset.title || "Untitled";
-
-      const { prev, next } = siblingsOf(card);
-
-      ensureAttached(v, /*prewarm=*/false);
-      if (prev) ensureAttached($("video.foreground", prev), /*prewarm=*/true);
-      if (next) ensureAttached($("video.foreground", next), /*prewarm=*/true);
-
-      // First frame visible right away
-      ensurePeekForCard(card);
-
-      applyMuteState();
-
-      v.loop = true;
-      v.play().then(() => {
-        startBgCanvasLoop(card); // animate bg (no flash)
-      }).catch(e => {
-        if (e && e.name === "NotAllowedError") { setGlobalMuted(true); v.play().catch(()=>{}); }
-      });
-
-      retainVideo(v);
-      if (prev) retainVideo($("video.foreground", prev));
-      if (next) retainVideo($("video.foreground", next));
+    // Play active
+    if (vNow) {
+      vNow.loop = true;
+      vNow.play().then(() => startBgLoop(cs[idx]))
+                 .catch(e => { if (e?.name === "NotAllowedError") { setGlobalMuted(true); vNow.play().catch(()=>{}); }});
+      retainVideo(vNow);
+      if (vPrev) retainVideo(vPrev);
+      if (vNext) retainVideo(vNext);
       evictIfNeeded();
     }
 
-    /* ===========================
-       Instantiate observers (assign, don't redeclare)
-    ============================ */
-    moreObserver = new IntersectionObserver((entries) => {
-      for (const e of entries) if (e.isIntersecting && !fetching) fetchPage();
-    }, { root: scroller, threshold: LOAD_MORE_THRESHOLD });
-    moreObserver.observe(sentinel);
+    // Pagination: if close to bottom, load more
+    if (cs.length - 1 - idx <= LOAD_MORE_GAP) fetchPage();
+  }
 
-    prewarmObserver = new IntersectionObserver((entries) => {
-      for (const e of entries) {
-        const card = e.target;
-        if (e.isIntersecting) {
-          card.classList.add("prewarm");
-          const v = card.querySelector("video.foreground");
-          ensureAttached(v, /*prewarm=*/true);
-          ensurePeekForCard(card);
-        } else {
-          if (activeVideo && card.contains(activeVideo)) continue;
-          card.classList.remove("prewarm");
-          stopBgCanvasLoop(card);
-        }
-      }
-    }, { root: scroller, rootMargin: "200% 0% 200% 0%", threshold: 0.01 });
+  // Debounced “scrollend” polyfill (works everywhere)
+  let scrollTimer = null;
+  scroller.addEventListener("scroll", () => {
+    if (scrollTimer) clearTimeout(scrollTimer);
+    scrollTimer = setTimeout(() => {
+      activate(indexFromScroll());
+    }, 110);
+  }, { passive: true });
 
-    const FULL_FOCUS_THRESHOLD_OBS = FULL_FOCUS_THRESHOLD;
-    fullObserver = new IntersectionObserver((entries) => {
-      for (const e of entries) {
-        if (e.isIntersecting && e.intersectionRatio >= FULL_FOCUS_THRESHOLD_OBS) {
-          if (scrollingActive) pendingCard = e.target; // defer until scrollend
-          else { activateCard(e.target); pendingCard = null; }
-        }
-      }
-    }, { root: scroller, threshold: FULL_FOCUS_THRESHOLD_OBS });
+  // Resize can shift vh on iOS (browser chrome)
+  window.addEventListener("resize", () => {
+    // Snap to nearest slide again to avoid half-slide after chrome resize
+    activate(indexFromScroll());
+  });
 
-    cullObserver = new IntersectionObserver((entries) => {
-      for (const e of entries) {
-        if (!e.isIntersecting) {
-          stopBgCanvasLoop(e.target);
-          const v = e.target.querySelector("video.foreground");
-          if (v) {
-            try { v.pause(); } catch {}
-            v.muted = true;
-            if (v === activeVideo) { activeVideo = null; applyMuteState(); }
-          }
-        }
-      }
-    }, { root: scroller, threshold: 0 });
-
-    bootObserver = new IntersectionObserver((entries) => {
-      for (const e of entries) {
-        if (e.isIntersecting && e.intersectionRatio >= FULL_FOCUS_THRESHOLD_OBS && !scrollingActive) {
-          activateCard(e.target);
-          bootObserver.disconnect();
-          break;
-        } else if (e.isIntersecting && e.intersectionRatio >= FULL_FOCUS_THRESHOLD_OBS && scrollingActive) {
-          pendingCard = e.target; // defer initial start
-        }
-      }
-    }, { root: scroller, threshold: FULL_FOCUS_THRESHOLD_OBS });
-
-    const bootWait = new MutationObserver(() => {
-      const firstCard = $(".card", scroller);
-      if (firstCard) {
-        $$(":scope > .card", scroller).forEach(c => {
-          fullObserver.observe(c);
-          cullObserver.observe(c);
-          prewarmObserver.observe(c);
-          bootObserver.observe(c);
-        });
-        bootWait.disconnect();
-      }
-    });
-    bootWait.observe(scroller, { childList: true });
-
-    /* ===========================
-       Scroll gating
-    ============================ */
-    let seTimer = null;
-    scroller.addEventListener("scroll", () => {
-      scrollingActive = true;
-      if (seTimer) clearTimeout(seTimer);
-      seTimer = setTimeout(() => scroller.dispatchEvent(new Event("scrollend")), 120);
-    }, { passive: true });
-
-    function pickFullyVisibleCard() {
-      let best = null;
-      $$(".card", scroller).forEach(card => {
-        const r = card.getBoundingClientRect();
-        const fully = r.top >= 0 && r.bottom <= window.innerHeight + 0.5;
-        if (fully) best = card;
-      });
-      if (best) activateCard(best);
+  /* Kick off */
+  fetchPage().then(() => {
+    // Ensure first batch activates
+    if (cards().length) {
+      // Scroll to first snap point (0) and activate
+      scroller.scrollTop = 0;
+      activate(0);
     }
-
-    scroller.addEventListener("scrollend", () => {
-      scrollingActive = false;
-      if (pendingCard) {
-        const r = pendingCard.getBoundingClientRect();
-        if (r.top >= 0 && r.bottom <= window.innerHeight + 0.5) {
-          activateCard(pendingCard);
-          pendingCard = null;
-          return;
-        }
-        pendingCard = null;
-      }
-      pickFullyVisibleCard();
-    });
-
-    /* Start fetching AFTER observers are ready */
-    fetchPage();
-  })();
-  </script>
+  });
+})();
+</script>
 </body>
 </html>
